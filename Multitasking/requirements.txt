@@ -1,0 +1,11 @@
+streamlit
+requests
+Pillow
+pypdf
+pikepdf
+pdf2image
+pytesseract
+pdf2docx
+python-docx
+reportlab
+qrcode

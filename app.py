@@ -244,25 +244,98 @@ AMBIGUOUS_WORDS = {
 
 
 # ── Helper functions ───────────────────────────────────────────────────────
+def _translate_chunk(text: str, src: str, tgt: str, retries: int = 3) -> str:
+    """Translate one chunk with retries on 429 / network errors."""
+    url = "https://translate.googleapis.com/translate_a/single"
+    params = {"client": "gtx", "sl": src, "tl": tgt, "dt": "t", "q": text}
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://translate.google.com/",
+    }
+    last_err = None
+    for attempt in range(retries):
+        try:
+            resp = requests.get(url, params=params, headers=headers, timeout=15)
+            if resp.status_code == 429:
+                wait = 1.5 * (attempt + 1)
+                time.sleep(wait)
+                last_err = "Too many requests (rate limited). Please wait a few seconds and try again."
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            if not data or not data[0]:
+                return ""
+            return "".join(part[0] for part in data[0] if part and part[0])
+        except requests.exceptions.HTTPError as e:
+            last_err = str(e)
+            if "429" in str(e):
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            break
+        except Exception as e:
+            last_err = str(e)
+            time.sleep(0.8 * (attempt + 1))
+    return f"[Translation error: {last_err}]"
+
+
 def google_translate_fallback(text: str, src: str, tgt: str) -> str:
-    try:
-        url = "https://translate.googleapis.com/translate_a/single"
-        params = {"client": "gtx", "sl": src, "tl": tgt, "dt": "t", "q": text}
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, params=params, headers=headers, timeout=12)
-        resp.raise_for_status()
-        data = resp.json()
-        return "".join(part[0] for part in data[0] if part[0])
-    except Exception as e:
-        return f"[Translation error: {e}]"
+    """Translate text; split long input into chunks to reduce rate-limit risk."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    # Google free endpoint is happier with shorter queries
+    max_len = 450
+    if len(text) <= max_len:
+        return _translate_chunk(text, src, tgt)
+
+    # Split on sentence boundaries when possible
+    parts = re.split(r"(?<=[.!?।])\s+", text)
+    chunks, buf = [], ""
+    for p in parts:
+        if len(buf) + len(p) + 1 <= max_len:
+            buf = (buf + " " + p).strip()
+        else:
+            if buf:
+                chunks.append(buf)
+            if len(p) > max_len:
+                # hard-split very long segments
+                for i in range(0, len(p), max_len):
+                    chunks.append(p[i : i + max_len])
+                buf = ""
+            else:
+                buf = p
+    if buf:
+        chunks.append(buf)
+
+    results = []
+    for i, chunk in enumerate(chunks):
+        if i > 0:
+            time.sleep(0.4)  # small gap between chunks
+        results.append(_translate_chunk(chunk, src, tgt))
+    return " ".join(results)
 
 
 def detect_language(text: str) -> str:
     try:
         url = "https://translate.googleapis.com/translate_a/single"
         params = {"client": "gtx", "sl": "auto", "tl": "en", "dt": "t", "q": text[:200]}
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Referer": "https://translate.google.com/",
+        }
         resp = requests.get(url, params=params, headers=headers, timeout=10)
+        if resp.status_code == 429:
+            return "en"
         data = resp.json()
         return data[2] if len(data) > 2 else "en"
     except Exception:

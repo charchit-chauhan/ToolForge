@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Convert — Tool Forge{% endblock %}
+
+{% block content %}
+<div class="container">
+  <div class="page-header">
+    <h1 class="page-title">Word ⇄ PDF Converter</h1>
+    <p class="page-sub">Convert between Word and PDF, or build documents from plain text.</p>
+  </div>
+
+  <div class="tool-tabs" id="convTabs">
+    <button class="tool-tab active" data-panel="word2pdf">Word → PDF</button>
+    <button class="tool-tab" data-panel="pdf2word">PDF → Word</button>
+    <button class="tool-tab" data-panel="text2pdf">Text → PDF</button>
+    <button class="tool-tab" data-panel="text2docx">Text → Word</button>
+  </div>
+
+  <div id="errorBox" class="alert alert-error hidden"></div>
+  <div id="successBox" class="alert alert-success hidden"></div>
+
+  <div class="tool-panel active" id="panel-word2pdf">
+    <div class="card">
+      <div class="dropzone" data-input="w2pFile">
+        <div class="dropzone-icon">📝</div>
+        <div class="dropzone-text">Drop a .docx file or click to browse</div>
+        <input type="file" id="w2pFile" accept=".docx" />
+      </div>
+      <button class="btn btn-primary" onclick="runConvert('word2pdf')">Convert to PDF</button>
+    </div>
+  </div>
+
+  <div class="tool-panel" id="panel-pdf2word">
+    <div class="card">
+      <div class="dropzone" data-input="p2wFile">
+        <div class="dropzone-icon">📄</div>
+        <div class="dropzone-text">Drop a PDF or click to browse</div>
+        <input type="file" id="p2wFile" accept=".pdf" />
+      </div>
+      <button class="btn btn-primary" onclick="runConvert('pdf2word')">Convert to Word</button>
+    </div>
+  </div>
+
+  <div class="tool-panel" id="panel-text2pdf">
+    <div class="card">
+      <div class="card-label">Enter text</div>
+      <textarea id="t2pText" placeholder="Paste or type your content…"></textarea>
+      <button class="btn btn-primary mt-2" onclick="runConvert('text2pdf')">Create PDF</button>
+    </div>
+  </div>
+
+  <div class="tool-panel" id="panel-text2docx">
+    <div class="card">
+      <div class="card-label">Enter text</div>
+      <textarea id="t2dText" placeholder="Paste or type your content…"></textarea>
+      <button class="btn btn-primary mt-2" onclick="runConvert('text2docx')">Create Word document</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function runConvert(action) {
+  const errorBox = document.getElementById('errorBox');
+  const successBox = document.getElementById('successBox');
+  errorBox.classList.add('hidden');
+  successBox.classList.add('hidden');
+
+  try {
+    showLoading('Converting…');
+    let res;
+    if (action === 'word2pdf') {
+      const f = document.getElementById('w2pFile').files[0];
+      if (!f) throw new Error('Select a .docx file');
+      const form = new FormData();
+      form.append('file', f);
+      res = await fetch('/api/convert/word-to-pdf', {method:'POST', body: form});
+    } else if (action === 'pdf2word') {
+      const f = document.getElementById('p2wFile').files[0];
+      if (!f) throw new Error('Select a PDF');
+      const form = new FormData();
+      form.append('file', f);
+      res = await fetch('/api/convert/pdf-to-word', {method:'POST', body: form});
+    } else if (action === 'text2pdf') {
+      const text = document.getElementById('t2pText').value.trim();
+      if (!text) throw new Error('Enter some text');
+      res = await fetch('/api/convert/text-to-pdf', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({text})
+      });
+    } else if (action === 'text2docx') {
+      const text = document.getElementById('t2dText').value.trim();
+      if (!text) throw new Error('Enter some text');
+      res = await fetch('/api/convert/text-to-docx', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({text})
+      });
+    }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Conversion failed');
+    }
+    const blob = await res.blob();
+    const disp = res.headers.get('Content-Disposition') || '';
+    const match = disp.match(/filename="?([^"]+)"?/);
+    downloadBlob(blob, match ? match[1] : 'download');
+    successBox.textContent = 'Done! File downloaded.';
+    successBox.classList.remove('hidden');
+  } catch (e) {
+    errorBox.textContent = e.message;
+    errorBox.classList.remove('hidden');
+  } finally {
+    hideLoading();
+  }
+}
+</script>
+{% endblock %}

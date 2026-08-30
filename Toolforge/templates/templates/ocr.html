@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}OCR & Text→Image — Tool Forge{% endblock %}
+
+{% block content %}
+<div class="container">
+  <div class="page-header">
+    <h1 class="page-title">Image ⇄ Text</h1>
+    <p class="page-sub">OCR extraction and styled text-to-image rendering.</p>
+  </div>
+
+  <div class="tool-tabs">
+    <button class="tool-tab active" data-panel="ocr">OCR (Image → Text)</button>
+    <button class="tool-tab" data-panel="t2i">Text → Image</button>
+  </div>
+
+  <div id="errorBox" class="alert alert-error hidden"></div>
+  <div id="successBox" class="alert alert-success hidden"></div>
+
+  <div class="tool-panel active" id="panel-ocr">
+    <div class="card">
+      <div class="dropzone" data-input="ocrFile">
+        <div class="dropzone-icon">🖼️</div>
+        <div class="dropzone-text">Drop an image or click to browse</div>
+        <div class="dropzone-hint">PNG, JPG, WEBP, TIFF…</div>
+        <input type="file" id="ocrFile" accept="image/*" />
+      </div>
+      <div class="form-group">
+        <label>OCR language</label>
+        <select id="ocrLang">
+          {% for lang in languages %}
+          <option value="{{ lang }}" {% if lang == 'English' %}selected{% endif %}>{{ lang }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button class="btn btn-primary" id="btnOcr">🔍 Extract Text</button>
+      <div id="ocrResult" class="result-box hidden mt-2"></div>
+      <button class="btn btn-secondary mt-1 hidden" id="btnCopyOcr">📋 Copy</button>
+    </div>
+  </div>
+
+  <div class="tool-panel" id="panel-t2i">
+    <div class="card">
+      <div class="form-group">
+        <label>Text</label>
+        <textarea id="t2iText" placeholder="Enter text to render on image…"></textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Width</label>
+          <input type="number" id="t2iW" value="800" min="200" max="2000" />
+        </div>
+        <div class="form-group">
+          <label>Height</label>
+          <input type="number" id="t2iH" value="400" min="100" max="1500" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Background</label>
+          <input type="text" id="t2iBg" value="#0f1420" />
+        </div>
+        <div class="form-group">
+          <label>Text colour</label>
+          <input type="text" id="t2iFg" value="#e2e8f8" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Font size</label>
+        <input type="number" id="t2iSize" value="32" min="12" max="96" />
+      </div>
+      <button class="btn btn-primary" id="btnT2i">🖼️ Generate Image</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('btnOcr').onclick = async () => {
+  const errorBox = document.getElementById('errorBox');
+  errorBox.classList.add('hidden');
+  const f = document.getElementById('ocrFile').files[0];
+  if (!f) { errorBox.textContent = 'Select an image'; errorBox.classList.remove('hidden'); return; }
+  const form = new FormData();
+  form.append('file', f);
+  form.append('lang', document.getElementById('ocrLang').value);
+  showLoading('Running OCR…');
+  try {
+    const res = await fetch('/api/ocr', {method:'POST', body: form});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    const box = document.getElementById('ocrResult');
+    box.textContent = data.text || '(no text detected)';
+    box.classList.remove('hidden');
+    document.getElementById('btnCopyOcr').classList.remove('hidden');
+  } catch(e) {
+    errorBox.textContent = e.message;
+    errorBox.classList.remove('hidden');
+  } finally { hideLoading(); }
+};
+
+document.getElementById('btnCopyOcr').onclick = () => {
+  navigator.clipboard.writeText(document.getElementById('ocrResult').textContent);
+};
+
+document.getElementById('btnT2i').onclick = async () => {
+  const errorBox = document.getElementById('errorBox');
+  errorBox.classList.add('hidden');
+  const text = document.getElementById('t2iText').value.trim();
+  if (!text) { errorBox.textContent = 'Enter some text'; errorBox.classList.remove('hidden'); return; }
+  showLoading('Generating image…');
+  try {
+    const res = await fetch('/api/text-to-image', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        text,
+        width: +document.getElementById('t2iW').value,
+        height: +document.getElementById('t2iH').value,
+        bg_color: document.getElementById('t2iBg').value,
+        text_color: document.getElementById('t2iFg').value,
+        font_size: +document.getElementById('t2iSize').value
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err.error || 'Failed');
+    }
+    const blob = await res.blob();
+    downloadBlob(blob, 'text_image.png');
+    document.getElementById('successBox').textContent = 'Image downloaded!';
+    document.getElementById('successBox').classList.remove('hidden');
+  } catch(e) {
+    errorBox.textContent = e.message;
+    errorBox.classList.remove('hidden');
+  } finally { hideLoading(); }
+};
+</script>
+{% endblock %}

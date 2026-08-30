@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Tool Forge — All-in-one Utilities{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-eyebrow">All-in-one utility suite</div>
+    <h1 class="hero-title">Documents, images<br>&amp; <em>language</em> — handled.</h1>
+    <p class="hero-sub">
+      Translate with smart disambiguation, edit PDFs, convert Word ↔ PDF,
+      run OCR, process images, generate speech &amp; QR codes — all in one
+      beautiful, private web app.
+    </p>
+    <div class="hero-actions">
+      <a href="{{ url_for('translator_page') }}" class="btn btn-primary">🚀 Start translating</a>
+      <a href="{{ url_for('pdf_page') }}" class="btn btn-secondary">📄 PDF tools</a>
+    </div>
+  </div>
+</section>
+
+<div class="container">
+  <div class="page-header">
+    <h2 class="page-title">Everything you need</h2>
+    <p class="page-sub">Pick a tool and get work done in seconds.</p>
+  </div>
+
+  <div class="feature-grid">
+    <a href="{{ url_for('translator_page') }}" class="feature-card">
+      <div class="feature-icon" style="background:rgba(0,201,167,0.15)">🌐</div>
+      <h3>Smart Translator</h3>
+      <p>70+ languages, auto-detect, word-sense disambiguation, romanization &amp; back-translation.</p>
+      <span class="tag">LANGUAGE</span>
+    </a>
+
+    <a href="{{ url_for('pdf_page') }}" class="feature-card">
+      <div class="feature-icon" style="background:rgba(255,107,107,0.15)">📄</div>
+      <h3>PDF Toolkit</h3>
+      <p>Merge, split, rotate, compress, watermark, protect, unlock, extract text &amp; images.</p>
+      <span class="tag">DOCUMENTS</span>
+    </a>
+
+    <a href="{{ url_for('convert_page') }}" class="feature-card">
+      <div class="feature-icon" style="background:rgba(116,192,252,0.15)">🔄</div>
+      <h3>Word ⇄ PDF</h3>
+      <p>Convert DOCX ↔ PDF, or turn plain text into polished PDF or Word documents.</p>
+      <span class="tag">CONVERT</span>
+    </a>
+
+    <a href="{{ url_for('ocr_page') }}" class="feature-card">
+      <div class="feature-icon" style="background:rgba(184,155,255,0.15)">🔍</div>
+      <h3>OCR &amp; Text→Image</h3>
+      <p>Extract text from screenshots &amp; scans, or render styled text onto an image canvas.</p>
+      <span class="tag">VISION</span>
+    </a>
+
+    <a href="{{ url_for('images_page') }}" class="feature-card">
+      <div class="feature-icon" style="background:rgba(255,209,102,0.15)">🖼️</div>
+      <h3>Image Tools</h3>
+      <p>Convert formats, compress, resize, rotate, watermark, grayscale &amp; apply filters.</p>
+      <span class="tag">MEDIA</span>
+    </a>
+
+    <a href="{{ url_for('tts_page') }}" class="feature-card">
+      <div class="feature-icon" style="background:rgba(0,201,167,0.12)">🔊</div>
+      <h3>Text → Speech</h3>
+      <p>Natural-sounding speech in dozens of languages. Listen or download the audio.</p>
+      <span class="tag">AUDIO</span>
+    </a>
+
+    <a href="{{ url_for('qr_page') }}" class="feature-card">
+      <div class="feature-icon" style="background:rgba(116,192,252,0.12)">📱</div>
+      <h3>QR Code Generator</h3>
+      <p>Create high-quality QR codes for URLs, text, Wi-Fi, or any data in seconds.</p>
+      <span class="tag">UTILITY</span>
+    </a>
+  </div>
+</div>
+{% endblock %}

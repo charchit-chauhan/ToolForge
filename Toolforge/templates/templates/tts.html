@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Text to Speech — Tool Forge{% endblock %}
+
+{% block content %}
+<div class="container">
+  <div class="page-header">
+    <h1 class="page-title">Text → Speech</h1>
+    <p class="page-sub">Natural-sounding speech in dozens of languages.</p>
+  </div>
+
+  <div class="card">
+    <div class="form-group">
+      <label>Language</label>
+      <select id="ttsLang">
+        {% for lang in languages %}
+        <option value="{{ lang }}" {% if lang == 'English' %}selected{% endif %}>{{ lang }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Text</label>
+      <textarea id="ttsText" placeholder="Enter text to convert to speech…"></textarea>
+    </div>
+    <button class="btn btn-primary" id="btnTts">🔊 Generate Speech</button>
+    <div id="errorBox" class="alert alert-error hidden mt-2"></div>
+    <div id="ttsPlayer" class="mt-2"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('btnTts').onclick = async () => {
+  const errorBox = document.getElementById('errorBox');
+  errorBox.classList.add('hidden');
+  const text = document.getElementById('ttsText').value.trim();
+  if (!text) { errorBox.textContent = 'Enter some text'; errorBox.classList.remove('hidden'); return; }
+  showLoading('Generating speech…');
+  try {
+    const res = await fetch('/api/tts', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({text, lang: document.getElementById('ttsLang').value})
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'TTS failed');
+    document.getElementById('ttsPlayer').innerHTML =
+      `<audio controls autoplay src="data:audio/mp3;base64,${data.audio_b64}"></audio>
+       <p class="result-meta mt-1">Tip: right-click the player → Save audio</p>`;
+  } catch(e) {
+    errorBox.textContent = e.message;
+    errorBox.classList.remove('hidden');
+  } finally { hideLoading(); }
+};
+</script>
+{% endblock %}

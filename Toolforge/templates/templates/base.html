@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Tool Forge{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧰</text></svg>" />
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <nav class="navbar">
+    <div class="nav-inner">
+      <a href="{{ url_for('index') }}" class="logo">
+        <span class="logo-icon">🧰</span>
+        <span>Tool Forge</span>
+      </a>
+      <button class="menu-toggle" id="menuToggle" aria-label="Menu">☰</button>
+      <div class="nav-links" id="navLinks">
+        <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">Home</a>
+        <a href="{{ url_for('translator_page') }}" class="{% if request.endpoint == 'translator_page' %}active{% endif %}">Translator</a>
+        <a href="{{ url_for('pdf_page') }}" class="{% if request.endpoint == 'pdf_page' %}active{% endif %}">PDF Tools</a>
+        <a href="{{ url_for('convert_page') }}" class="{% if request.endpoint == 'convert_page' %}active{% endif %}">Convert</a>
+        <a href="{{ url_for('ocr_page') }}" class="{% if request.endpoint == 'ocr_page' %}active{% endif %}">OCR</a>
+        <a href="{{ url_for('images_page') }}" class="{% if request.endpoint == 'images_page' %}active{% endif %}">Images</a>
+        <a href="{{ url_for('tts_page') }}" class="{% if request.endpoint == 'tts_page' %}active{% endif %}">TTS</a>
+        <a href="{{ url_for('qr_page') }}" class="{% if request.endpoint == 'qr_page' %}active{% endif %}">QR Code</a>
+      </div>
+    </div>
+  </nav>
+
+  {% block content %}{% endblock %}
+
+  <footer class="footer">
+    Tool Forge · All-in-one document, image &amp; language utilities · Built with Flask
+  </footer>
+
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-box">
+      <div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto 1rem"></div>
+      <div id="loadingText">Processing…</div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

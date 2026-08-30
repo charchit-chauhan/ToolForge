@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}Translator — Tool Forge{% endblock %}
+
+{% block content %}
+<div class="container">
+  <div class="page-header">
+    <h1 class="page-title">Smart Translator</h1>
+    <p class="page-sub">70+ languages · Auto-detect · Word-sense disambiguation · Romanization</p>
+  </div>
+
+  <div class="card">
+    <div class="form-row-3">
+      <div class="form-group">
+        <label for="srcLang">From</label>
+        <select id="srcLang">
+          {% for lang in languages %}
+          <option value="{{ lang }}" {% if lang == 'English' %}selected{% endif %}>{{ lang }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group" style="text-align:center">
+        <label>&nbsp;</label>
+        <button type="button" class="btn btn-ghost" id="swapLangs" title="Swap languages">⇄</button>
+      </div>
+      <div class="form-group">
+        <label for="tgtLang">To</label>
+        <select id="tgtLang">
+          {% for lang in languages %}
+          <option value="{{ lang }}" {% if lang == 'Hindi' %}selected{% endif %}>{{ lang }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="checkbox-row">
+      <input type="checkbox" id="autoDetect" />
+      <label for="autoDetect" style="margin:0">🔍 Auto-detect source language</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Input text</div>
+    <textarea id="inputText" placeholder="Type or paste text to translate…"></textarea>
+    <div class="result-meta" id="charCount">0 chars · 0 words</div>
+  </div>
+
+  <div id="disambigBox" class="disambig-panel hidden"></div>
+
+  <div class="flex gap-1 mb-2">
+    <button class="btn btn-primary" id="btnTranslate">🚀 Translate</button>
+    <button class="btn btn-secondary" id="btnClear">Clear</button>
+  </div>
+
+  <div id="errorBox" class="alert alert-error hidden"></div>
+
+  <div id="resultCard" class="card hidden">
+    <div class="card-label">Translation</div>
+    <div class="result-box" id="translatedText"></div>
+    <div class="result-meta" id="resultMeta"></div>
+
+    <div id="romanBox" class="mt-2 hidden">
+      <div class="card-label">Romanization</div>
+      <div class="result-box" id="romanText" style="max-height:120px"></div>
+    </div>
+
+    <div id="backBox" class="mt-2 hidden">
+      <div class="card-label">Back-translation (check accuracy)</div>
+      <div class="result-box" id="backText" style="max-height:120px"></div>
+    </div>
+
+    <div class="mt-2 flex gap-1">
+      <button class="btn btn-secondary" id="btnCopy">📋 Copy</button>
+      <button class="btn btn-secondary" id="btnSpeak">🔊 Listen</button>
+    </div>
+    <div id="ttsPlayer" class="mt-1"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  const input = document.getElementById('inputText');
+  const srcSel = document.getElementById('srcLang');
+  const tgtSel = document.getElementById('tgtLang');
+  const autoDetect = document.getElementById('autoDetect');
+  const disambigBox = document.getElementById('disambigBox');
+  const resultCard = document.getElementById('resultCard');
+  const errorBox = document.getElementById('errorBox');
+  let lastAmbiguous = [];
+
+  input.addEventListener('input', () => {
+    const t = input.value;
+    const words = t.trim() ? t.trim().split(/\s+/).length : 0;
+    document.getElementById('charCount').textContent = `${t.length} chars · ${words} words`;
+    // Debounced ambiguous check
+    clearTimeout(window._ambigTimer);
+    window._ambigTimer = setTimeout(checkAmbiguous, 400);
+  });
+
+  async function checkAmbiguous() {
+    const text = input.value.trim();
+    if (!text) { disambigBox.classList.add('hidden'); return; }
+    try {
+      const res = await fetch('/api/ambiguous', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text})
+      });
+      const data = await res.json();
+      lastAmbiguous = data.ambiguous || [];
+      if (!lastAmbiguous.length) {
+        disambigBox.classList.add('hidden');
+        return;
+      }
+      let html = '<h4>⚠️ Ambiguous word(s) detected — pick the intended meaning</h4>';
+      lastAmbiguous.forEach(item => {
+        html += `<div class="sense-group"><strong>${item.word}</strong>`;
+        if (item.auto) html += ` <span class="text-muted text-sm">(auto: ${item.auto})</span>`;
+        item.senses.forEach(s => {
+          const checked = s === (item.auto || item.default) ? 'checked' : '';
+          html += `<label><input type="radio" name="sense_${item.word}" value="${s}" ${checked}> ${s}</label>`;
+        });
+        html += '</div>';
+      });
+      disambigBox.innerHTML = html;
+      disambigBox.classList.remove('hidden');
+    } catch(e) {}
+  }
+
+  document.getElementById('swapLangs').onclick = () => {
+    const a = srcSel.value, b = tgtSel.value;
+    srcSel.value = b; tgtSel.value = a;
+  };
+
+  document.getElementById('btnClear').onclick = () => {
+    input.value = '';
+    document.getElementById('charCount').textContent = '0 chars · 0 words';
+    disambigBox.classList.add('hidden');
+    resultCard.classList.add('hidden');
+    errorBox.classList.add('hidden');
+  };
+
+  document.getElementById('btnTranslate').onclick = async () => {
+    const text = input.value.trim();
+    if (!text) { showError('Please enter some text.'); return; }
+
+    const senses = {};
+    lastAmbiguous.forEach(item => {
+      const sel = document.querySelector(`input[name="sense_${item.word}"]:checked`);
+      if (sel) senses[item.word] = sel.value;
+    });
+
+    showLoading('Translating…');
+    errorBox.classList.add('hidden');
+    try {
+      const res = await fetch('/api/translate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          text,
+          src_lang: srcSel.value,
+          tgt_lang: tgtSel.value,
+          auto_detect: autoDetect.checked,
+          senses
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) { showError(data.error || 'Translation failed'); return; }
+
+      document.getElementById('translatedText').textContent = data.translated;
+      document.getElementById('resultMeta').textContent =
+        `${data.source_lang} → ${tgtSel.value}`;
+
+      if (data.romanization) {
+        document.getElementById('romanText').textContent = data.romanization;
+        document.getElementById('romanBox').classList.remove('hidden');
+      } else {
+        document.getElementById('romanBox').classList.add('hidden');
+      }
+
+      if (data.back_translation) {
+        document.getElementById('backText').textContent = data.back_translation;
+        document.getElementById('backBox').classList.remove('hidden');
+      } else {
+        document.getElementById('backBox').classList.add('hidden');
+      }
+
+      resultCard.classList.remove('hidden');
+      document.getElementById('ttsPlayer').innerHTML = '';
+    } catch(e) {
+      showError(e.message);
+    } finally {
+      hideLoading();
+    }
+  };
+
+  document.getElementById('btnCopy').onclick = () => {
+    const t = document.getElementById('translatedText').textContent;
+    navigator.clipboard.writeText(t).then(() => {
+      const btn = document.getElementById('btnCopy');
+      btn.textContent = '✓ Copied';
+      setTimeout(() => btn.textContent = '📋 Copy', 1500);
+    });
+  };
+
+  document.getElementById('btnSpeak').onclick = async () => {
+    const text = document.getElementById('translatedText').textContent;
+    if (!text) return;
+    showLoading('Generating speech…');
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text, lang: tgtSel.value})
+      });
+      const data = await res.json();
+      if (!res.ok) { showError(data.error || 'TTS failed'); return; }
+      document.getElementById('ttsPlayer').innerHTML =
+        `<audio controls autoplay src="data:audio/mp3;base64,${data.audio_b64}"></audio>`;
+    } catch(e) { showError(e.message); }
+    finally { hideLoading(); }
+  };
+
+  function showError(msg) {
+    errorBox.textContent = msg;
+    errorBox.classList.remove('hidden');
+  }
+})();
+</script>
+{% endblock %}

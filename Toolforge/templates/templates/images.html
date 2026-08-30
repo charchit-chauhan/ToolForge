@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}Image Tools — Tool Forge{% endblock %}
+
+{% block content %}
+<div class="container">
+  <div class="page-header">
+    <h1 class="page-title">Image Tools</h1>
+    <p class="page-sub">Convert · Compress · Resize · Rotate · Watermark · Filters</p>
+  </div>
+
+  <div class="tool-tabs">
+    <button class="tool-tab active" data-panel="convert">Convert Format</button>
+    <button class="tool-tab" data-panel="compress">Compress</button>
+    <button class="tool-tab" data-panel="resize">Resize</button>
+    <button class="tool-tab" data-panel="rotate">Rotate / Flip</button>
+    <button class="tool-tab" data-panel="watermark">Watermark</button>
+    <button class="tool-tab" data-panel="grayscale">Grayscale</button>
+    <button class="tool-tab" data-panel="filter">Apply Filter</button>
+  </div>
+
+  <div id="errorBox" class="alert alert-error hidden"></div>
+  <div id="successBox" class="alert alert-success hidden"></div>
+
+  <div class="tool-panel active" id="panel-convert">
+    <div class="card">
+      <div class="dropzone" data-input="convImg"><div class="dropzone-icon">🖼️</div><div class="dropzone-text">Drop image or click</div><input type="file" id="convImg" accept="image/*" /></div>
+      <div class="form-group"><label>Target format</label>
+        <select id="convFmt"><option>PNG</option><option>JPG</option><option>WEBP</option><option>GIF</option><option>BMP</option><option>TIFF</option></select>
+      </div>
+      <button class="btn btn-primary" onclick="runImg('convert')">Convert</button>
+    </div>
+  </div>
+
+  <div class="tool-panel" id="panel-compress">
+    <div class="card">
+      <div class="dropzone" data-input="compImg"><div class="dropzone-icon">🖼️</div><div class="dropzone-text">Drop image or click</div><input type="file" id="compImg" accept="image/*" /></div>
+      <div class="form-group"><label>Quality (1–95)</label><input type="number" id="compQ" value="70" min="1" max="95" /></div>
+      <button class="btn btn-primary" onclick="runImg('compress')">Compress</button>
+    </div>
+  </div>
+
+  <div class="tool-panel" id="panel-resize">
+    <div class="card">
+      <div class="dropzone" data-input="reszImg"><div class="dropzone-icon">🖼️</div><div class="dropzone-text">Drop image or click</div><input type="file" id="reszImg" accept="image/*" /></div>
+      <div class="form-row">
+        <div class="form-group"><label>Width</label><input type="number" id="reszW" value="800" /></div>
+        <div class="form-group"><label>Height</label><input type="number" id="reszH" value="600" /></div>
+      </div>
+      <button class="btn btn-primary" onclick="runImg('resize')">Resize</button>
+    </div>
+  </div>
+
+  <div class="tool-panel" id="panel-rotate">
+    <div class="card">
+      <div class="dropzone" data-input="rotImg"><div class="dropzone-icon">🖼️</div><div class="dropzone-text">Drop image or click</div><input type="file" id="rotImg" accept="image/*" /></div>
+      <div class="form-row">
+        <div class="form-group"><label>Degrees</label>
+          <select id="rotDeg"><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option><option value="0">0°</option></select>
+        </div>
+        <div class="form-group"><label>Flip</label>
+          <select id="rotFlip"><option value="none">None</option><option value="horizontal">Horizontal</option><option value="vertical">Vertical</option></select>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="runImg('rotate')">Apply</button>
+    </div>
+  </div>
+
+  <div class="tool-panel" id="panel-watermark">
+    <div class="card">
+      <div class="dropzone" data-input="wmImg"><div class="dropzone-icon">🖼️</div><div class="dropzone-text">Drop image or click</div><input type="file" id="wmImg" accept="image/*" /></div>
+      <div class="form-group"><label>Watermark text</label><input type="text" id="wmImgText" value="© Tool Forge" /></div>
+      <button class="btn btn-primary" onclick="runImg('watermark')">Add Watermark</button>
+    </div>
+  </div>
+
+  <div class="tool-panel" id="panel-grayscale">
+    <div class="card">
+      <div class="dropzone" data-input="gsImg"><div class="dropzone-icon">🖼️</div><div class="dropzone-text">Drop image or click</div><input type="file" id="gsImg" accept="image/*" /></div>
+      <button class="btn btn-primary" onclick="runImg('grayscale')">Convert to Grayscale</button>
+    </div>
+  </div>
+
+  <div class="tool-panel" id="panel-filter">
+    <div class="card">
+      <div class="dropzone" data-input="filtImg"><div class="dropzone-icon">🖼️</div><div class="dropzone-text">Drop image or click</div><input type="file" id="filtImg" accept="image/*" /></div>
+      <div class="form-group"><label>Filter</label>
+        <select id="filtType">
+          <option value="BLUR">Blur</option>
+          <option value="SHARPEN">Sharpen</option>
+          <option value="EDGE_ENHANCE">Edge Enhance</option>
+          <option value="EMBOSS">Emboss</option>
+          <option value="CONTOUR">Contour</option>
+          <option value="SMOOTH">Smooth</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" onclick="runImg('filter')">Apply Filter</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function runImg(action) {
+  const errorBox = document.getElementById('errorBox');
+  const successBox = document.getElementById('successBox');
+  errorBox.classList.add('hidden');
+  successBox.classList.add('hidden');
+  const form = new FormData();
+  let url = '';
+
+  try {
+    if (action === 'convert') {
+      const f = document.getElementById('convImg').files[0];
+      if (!f) throw new Error('Select an image');
+      form.append('file', f);
+      form.append('format', document.getElementById('convFmt').value);
+      url = '/api/image/convert';
+    } else if (action === 'compress') {
+      const f = document.getElementById('compImg').files[0];
+      if (!f) throw new Error('Select an image');
+      form.append('file', f);
+      form.append('quality', document.getElementById('compQ').value);
+      url = '/api/image/compress';
+    } else if (action === 'resize') {
+      const f = document.getElementById('reszImg').files[0];
+      if (!f) throw new Error('Select an image');
+      form.append('file', f);
+      form.append('width', document.getElementById('reszW').value);
+      form.append('height', document.getElementById('reszH').value);
+      url = '/api/image/resize';
+    } else if (action === 'rotate') {
+      const f = document.getElementById('rotImg').files[0];
+      if (!f) throw new Error('Select an image');
+      form.append('file', f);
+      form.append('degrees', document.getElementById('rotDeg').value);
+      form.append('flip', document.getElementById('rotFlip').value);
+      url = '/api/image/rotate';
+    } else if (action === 'watermark') {
+      const f = document.getElementById('wmImg').files[0];
+      if (!f) throw new Error('Select an image');
+      form.append('file', f);
+      form.append('text', document.getElementById('wmImgText').value);
+      url = '/api/image/watermark';
+    } else if (action === 'grayscale') {
+      const f = document.getElementById('gsImg').files[0];
+      if (!f) throw new Error('Select an image');
+      form.append('file', f);
+      url = '/api/image/grayscale';
+    } else if (action === 'filter') {
+      const f = document.getElementById('filtImg').files[0];
+      if (!f) throw new Error('Select an image');
+      form.append('file', f);
+      form.append('filter', document.getElementById('filtType').value);
+      url = '/api/image/filter';
+    }
+
+    showLoading('Processing image…');
+    const res = await fetch(url, {method:'POST', body: form});
+    if (!res.ok) {
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err.error || 'Failed');
+    }
+    const blob = await res.blob();
+    const disp = res.headers.get('Content-Disposition') || '';
+    const match = disp.match(/filename="?([^"]+)"?/);
+    downloadBlob(blob, match ? match[1] : 'image.png');
+    successBox.textContent = 'Done! Image downloaded.';
+    successBox.classList.remove('hidden');
+  } catch(e) {
+    errorBox.textContent = e.message;
+    errorBox.classList.remove('hidden');
+  } finally { hideLoading(); }
+}
+</script>
+{% endblock %}

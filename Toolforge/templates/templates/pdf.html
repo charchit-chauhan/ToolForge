@@ -1,0 +1,317 @@
+{% extends "base.html" %}
+{% block title %}PDF Tools — Tool Forge{% endblock %}
+
+{% block content %}
+<div class="container">
+  <div class="page-header">
+    <h1 class="page-title">PDF Toolkit</h1>
+    <p class="page-sub">Merge · Split · Rotate · Compress · Watermark · Protect · Extract</p>
+  </div>
+
+  <div class="tool-tabs" id="pdfTabs">
+    <button class="tool-tab active" data-panel="merge">Merge</button>
+    <button class="tool-tab" data-panel="split">Split</button>
+    <button class="tool-tab" data-panel="rotate">Rotate</button>
+    <button class="tool-tab" data-panel="compress">Compress</button>
+    <button class="tool-tab" data-panel="watermark">Watermark</button>
+    <button class="tool-tab" data-panel="protect">Protect</button>
+    <button class="tool-tab" data-panel="unlock">Unlock</button>
+    <button class="tool-tab" data-panel="extract-text">Extract Text</button>
+    <button class="tool-tab" data-panel="extract-images">Extract Images</button>
+    <button class="tool-tab" data-panel="to-images">PDF → Images</button>
+    <button class="tool-tab" data-panel="from-images">Images → PDF</button>
+  </div>
+
+  <div id="errorBox" class="alert alert-error hidden"></div>
+  <div id="successBox" class="alert alert-success hidden"></div>
+
+  <!-- Merge -->
+  <div class="tool-panel active" id="panel-merge">
+    <div class="card">
+      <div class="card-label">Upload 2+ PDF files</div>
+      <div class="dropzone" data-input="mergeFiles" data-multiple>
+        <div class="dropzone-icon">📂</div>
+        <div class="dropzone-text">Drop PDFs here or click to browse</div>
+        <div class="dropzone-hint">Multiple files supported</div>
+        <input type="file" id="mergeFiles" accept=".pdf" multiple />
+      </div>
+      <ul class="file-list" id="mergeList"></ul>
+      <button class="btn btn-primary" onclick="runPdf('merge')">Merge PDFs</button>
+    </div>
+  </div>
+
+  <!-- Split -->
+  <div class="tool-panel" id="panel-split">
+    <div class="card">
+      <div class="card-label">Upload a PDF</div>
+      <div class="dropzone" data-input="splitFile">
+        <div class="dropzone-icon">📄</div>
+        <div class="dropzone-text">Drop PDF or click to browse</div>
+        <input type="file" id="splitFile" accept=".pdf" />
+      </div>
+      <div class="form-group">
+        <label>Mode</label>
+        <select id="splitMode">
+          <option value="all">All pages (ZIP)</option>
+          <option value="range">Page range</option>
+        </select>
+      </div>
+      <div class="form-row" id="rangeRow" style="display:none">
+        <div class="form-group">
+          <label>Start page</label>
+          <input type="number" id="splitStart" value="1" min="1" />
+        </div>
+        <div class="form-group">
+          <label>End page</label>
+          <input type="number" id="splitEnd" value="1" min="1" />
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="runPdf('split')">Split PDF</button>
+    </div>
+  </div>
+
+  <!-- Rotate -->
+  <div class="tool-panel" id="panel-rotate">
+    <div class="card">
+      <div class="dropzone" data-input="rotateFile">
+        <div class="dropzone-icon">📄</div>
+        <div class="dropzone-text">Drop PDF or click to browse</div>
+        <input type="file" id="rotateFile" accept=".pdf" />
+      </div>
+      <div class="form-group">
+        <label>Degrees</label>
+        <select id="rotateDeg">
+          <option value="90">90° clockwise</option>
+          <option value="180">180°</option>
+          <option value="270">270° (90° counter-clockwise)</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" onclick="runPdf('rotate')">Rotate</button>
+    </div>
+  </div>
+
+  <!-- Compress -->
+  <div class="tool-panel" id="panel-compress">
+    <div class="card">
+      <div class="dropzone" data-input="compressFile">
+        <div class="dropzone-icon">📄</div>
+        <div class="dropzone-text">Drop PDF or click to browse</div>
+        <input type="file" id="compressFile" accept=".pdf" />
+      </div>
+      <button class="btn btn-primary" onclick="runPdf('compress')">Compress PDF</button>
+    </div>
+  </div>
+
+  <!-- Watermark -->
+  <div class="tool-panel" id="panel-watermark">
+    <div class="card">
+      <div class="dropzone" data-input="wmFile">
+        <div class="dropzone-icon">📄</div>
+        <div class="dropzone-text">Drop PDF or click to browse</div>
+        <input type="file" id="wmFile" accept=".pdf" />
+      </div>
+      <div class="form-group">
+        <label>Watermark text</label>
+        <input type="text" id="wmText" value="CONFIDENTIAL" />
+      </div>
+      <button class="btn btn-primary" onclick="runPdf('watermark')">Add Watermark</button>
+    </div>
+  </div>
+
+  <!-- Protect -->
+  <div class="tool-panel" id="panel-protect">
+    <div class="card">
+      <div class="dropzone" data-input="protectFile">
+        <div class="dropzone-icon">📄</div>
+        <div class="dropzone-text">Drop PDF or click to browse</div>
+        <input type="file" id="protectFile" accept=".pdf" />
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="protectPass" placeholder="Enter password" />
+      </div>
+      <button class="btn btn-primary" onclick="runPdf('protect')">Protect PDF</button>
+    </div>
+  </div>
+
+  <!-- Unlock -->
+  <div class="tool-panel" id="panel-unlock">
+    <div class="card">
+      <div class="dropzone" data-input="unlockFile">
+        <div class="dropzone-icon">📄</div>
+        <div class="dropzone-text">Drop PDF or click to browse</div>
+        <input type="file" id="unlockFile" accept=".pdf" />
+      </div>
+      <div class="form-group">
+        <label>Password (if known)</label>
+        <input type="password" id="unlockPass" placeholder="Enter password" />
+      </div>
+      <button class="btn btn-primary" onclick="runPdf('unlock')">Unlock PDF</button>
+    </div>
+  </div>
+
+  <!-- Extract text -->
+  <div class="tool-panel" id="panel-extract-text">
+    <div class="card">
+      <div class="dropzone" data-input="extTextFile">
+        <div class="dropzone-icon">📄</div>
+        <div class="dropzone-text">Drop PDF or click to browse</div>
+        <input type="file" id="extTextFile" accept=".pdf" />
+      </div>
+      <button class="btn btn-primary" onclick="runPdf('extract-text')">Extract Text</button>
+      <div id="extractTextResult" class="result-box hidden mt-2"></div>
+    </div>
+  </div>
+
+  <!-- Extract images -->
+  <div class="tool-panel" id="panel-extract-images">
+    <div class="card">
+      <div class="dropzone" data-input="extImgFile">
+        <div class="dropzone-icon">📄</div>
+        <div class="dropzone-text">Drop PDF or click to browse</div>
+        <input type="file" id="extImgFile" accept=".pdf" />
+      </div>
+      <button class="btn btn-primary" onclick="runPdf('extract-images')">Extract Images (ZIP)</button>
+    </div>
+  </div>
+
+  <!-- PDF → Images -->
+  <div class="tool-panel" id="panel-to-images">
+    <div class="card">
+      <div class="dropzone" data-input="toImgFile">
+        <div class="dropzone-icon">📄</div>
+        <div class="dropzone-text">Drop PDF or click to browse</div>
+        <input type="file" id="toImgFile" accept=".pdf" />
+      </div>
+      <button class="btn btn-primary" onclick="runPdf('to-images')">Convert to Images (ZIP)</button>
+    </div>
+  </div>
+
+  <!-- Images → PDF -->
+  <div class="tool-panel" id="panel-from-images">
+    <div class="card">
+      <div class="dropzone" data-input="fromImgFiles" data-multiple>
+        <div class="dropzone-icon">🖼️</div>
+        <div class="dropzone-text">Drop images or click to browse</div>
+        <div class="dropzone-hint">PNG, JPG, WEBP…</div>
+        <input type="file" id="fromImgFiles" accept="image/*" multiple />
+      </div>
+      <button class="btn btn-primary" onclick="runPdf('from-images')">Create PDF</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('splitMode').addEventListener('change', e => {
+  document.getElementById('rangeRow').style.display = e.target.value === 'range' ? 'grid' : 'none';
+});
+
+async function runPdf(action) {
+  const errorBox = document.getElementById('errorBox');
+  const successBox = document.getElementById('successBox');
+  errorBox.classList.add('hidden');
+  successBox.classList.add('hidden');
+
+  const form = new FormData();
+  let url = '';
+
+  try {
+    if (action === 'merge') {
+      const files = document.getElementById('mergeFiles').files;
+      if (files.length < 2) throw new Error('Select at least 2 PDFs');
+      for (const f of files) form.append('files', f);
+      url = '/api/pdf/merge';
+    } else if (action === 'split') {
+      const f = document.getElementById('splitFile').files[0];
+      if (!f) throw new Error('Select a PDF');
+      form.append('file', f);
+      form.append('mode', document.getElementById('splitMode').value);
+      form.append('start', document.getElementById('splitStart').value);
+      form.append('end', document.getElementById('splitEnd').value);
+      url = '/api/pdf/split';
+    } else if (action === 'rotate') {
+      const f = document.getElementById('rotateFile').files[0];
+      if (!f) throw new Error('Select a PDF');
+      form.append('file', f);
+      form.append('degrees', document.getElementById('rotateDeg').value);
+      url = '/api/pdf/rotate';
+    } else if (action === 'compress') {
+      const f = document.getElementById('compressFile').files[0];
+      if (!f) throw new Error('Select a PDF');
+      form.append('file', f);
+      url = '/api/pdf/compress';
+    } else if (action === 'watermark') {
+      const f = document.getElementById('wmFile').files[0];
+      if (!f) throw new Error('Select a PDF');
+      form.append('file', f);
+      form.append('text', document.getElementById('wmText').value);
+      url = '/api/pdf/watermark';
+    } else if (action === 'protect') {
+      const f = document.getElementById('protectFile').files[0];
+      const pass = document.getElementById('protectPass').value;
+      if (!f || !pass) throw new Error('File and password required');
+      form.append('file', f);
+      form.append('password', pass);
+      url = '/api/pdf/protect';
+    } else if (action === 'unlock') {
+      const f = document.getElementById('unlockFile').files[0];
+      if (!f) throw new Error('Select a PDF');
+      form.append('file', f);
+      form.append('password', document.getElementById('unlockPass').value);
+      url = '/api/pdf/unlock';
+    } else if (action === 'extract-text') {
+      const f = document.getElementById('extTextFile').files[0];
+      if (!f) throw new Error('Select a PDF');
+      form.append('file', f);
+      showLoading('Extracting text…');
+      const res = await fetch('/api/pdf/extract-text', {method:'POST', body: form});
+      const data = await res.json();
+      hideLoading();
+      if (!res.ok) throw new Error(data.error);
+      const box = document.getElementById('extractTextResult');
+      box.textContent = data.text || '(no text found)';
+      box.classList.remove('hidden');
+      successBox.textContent = 'Text extracted successfully.';
+      successBox.classList.remove('hidden');
+      return;
+    } else if (action === 'extract-images') {
+      const f = document.getElementById('extImgFile').files[0];
+      if (!f) throw new Error('Select a PDF');
+      form.append('file', f);
+      url = '/api/pdf/extract-images';
+    } else if (action === 'to-images') {
+      const f = document.getElementById('toImgFile').files[0];
+      if (!f) throw new Error('Select a PDF');
+      form.append('file', f);
+      url = '/api/pdf/to-images';
+    } else if (action === 'from-images') {
+      const files = document.getElementById('fromImgFiles').files;
+      if (!files.length) throw new Error('Select at least one image');
+      for (const f of files) form.append('files', f);
+      url = '/api/pdf/from-images';
+    }
+
+    showLoading('Processing…');
+    const res = await fetch(url, {method: 'POST', body: form});
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Request failed');
+    }
+    const blob = await res.blob();
+    const disp = res.headers.get('Content-Disposition') || '';
+    const match = disp.match(/filename="?([^"]+)"?/);
+    const name = match ? match[1] : 'download';
+    downloadBlob(blob, name);
+    successBox.textContent = 'Done! File downloaded.';
+    successBox.classList.remove('hidden');
+  } catch (e) {
+    errorBox.textContent = e.message;
+    errorBox.classList.remove('hidden');
+  } finally {
+    hideLoading();
+  }
+}
+</script>
+{% endblock %}

@@ -21,7 +21,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 import qrcode
 
-WORKDIR = "/tmp/linguaai_toolkit"
+WORKDIR = "/tmp/toolforge"
 os.makedirs(WORKDIR, exist_ok=True)
 
 # ════════════════════════════════════════════════

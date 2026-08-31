@@ -34,13 +34,75 @@ from processors import (
     text_to_image, generate_qr_code, WORKDIR,
 )
 
+# Load .env from project root if present (no extra dependency required)
+def _load_dotenv():
+    env_path = Path(__file__).resolve().parent / ".env"
+    if not env_path.is_file():
+        return
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key, val = key.strip(), val.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = val
+    except Exception:
+        pass
+
+_load_dotenv()
+
+
 # ── App setup ──────────────────────────────────────────────────────────────
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "toolforge-dev-secret-change-me")
+app.config["PERMANENT_SESSION_LIFETIME"] = 60 * 60 * 24 * 30  # 30 days
 app.config["MAX_CONTENT_LENGTH"] = 80 * 1024 * 1024  # 80 MB
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(WORKDIR, exist_ok=True)
+
+
+# ── Auth (one-time name gate for tools) ────────────────────────────────────
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("user_name"):
+            return redirect(url_for("login", next=request.path))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("user_name"):
+        return redirect(url_for("index"))
+    error = None
+    if request.method == "POST":
+        name = (request.form.get("name") or "").strip()
+        email = (request.form.get("email") or "").strip()
+        if not name:
+            error = "Please enter your name."
+        elif not email:
+            error = "Please enter your email."
+        elif not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            error = "Please enter a valid email address."
+        else:
+            session["user_name"] = name[:80]
+            session["user_email"] = email[:120]
+            session.permanent = True
+            nxt = request.args.get("next") or url_for("index")
+            if not nxt.startswith("/"):
+                nxt = url_for("index")
+            return redirect(nxt)
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 # ── Language maps ──────────────────────────────────────────────────────────
 LANG_MAP = {
@@ -244,11 +306,40 @@ AMBIGUOUS_WORDS = {
 
 
 # ── Helper functions ───────────────────────────────────────────────────────
-def _translate_chunk(text: str, src: str, tgt: str, retries: int = 3) -> str:
-    """Translate one chunk with retries on 429 / network errors."""
-    url = "https://translate.googleapis.com/translate_a/single"
-    params = {"client": "gtx", "sl": src, "tl": tgt, "dt": "t", "q": text}
-    headers = {
+# ════════════════════════════════════════════════
+#  TRANSLATION PROVIDERS (long-term / production)
+# ════════════════════════════════════════════════
+# Priority order (first success wins):
+#   1. DeepL          — set DEEPL_API_KEY
+#   2. Google Cloud   — set GOOGLE_TRANSLATE_API_KEY
+#   3. LibreTranslate — set LIBRETRANSLATE_URL (+ optional LIBRETRANSLATE_API_KEY)
+#   4. Free fallbacks — Google GTX → MyMemory (rate-limited; last resort)
+#
+# Get free keys:
+#   DeepL free:     https://www.deepl.com/pro-api  (500k chars/month free)
+#   Google Cloud:   https://console.cloud.google.com/  (enable Cloud Translation)
+#   LibreTranslate: self-host or use a public host with a key
+# ════════════════════════════════════════════════
+
+DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY", "").strip()
+GOOGLE_TRANSLATE_API_KEY = os.environ.get("GOOGLE_TRANSLATE_API_KEY", "").strip()
+LIBRETRANSLATE_URL = os.environ.get("LIBRETRANSLATE_URL", "").strip().rstrip("/")
+LIBRETRANSLATE_API_KEY = os.environ.get("LIBRETRANSLATE_API_KEY", "").strip()
+
+# DeepL uses slightly different language codes
+_DEEPL_CODE = {
+    "en": "EN", "hi": "HI", "fr": "FR", "de": "DE", "es": "ES",
+    "zh": "ZH", "ja": "JA", "ar": "AR", "pt": "PT", "ru": "RU",
+    "it": "IT", "ko": "KO", "tr": "TR", "nl": "NL", "pl": "PL",
+    "sv": "SV", "da": "DA", "fi": "FI", "el": "EL", "cs": "CS",
+    "ro": "RO", "hu": "HU", "uk": "UK", "bg": "BG", "sk": "SK",
+    "sl": "SL", "et": "ET", "lv": "LV", "lt": "LT", "id": "ID",
+    "nb": "NB", "no": "NB",
+}
+
+
+def _headers():
+    return {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -256,45 +347,179 @@ def _translate_chunk(text: str, src: str, tgt: str, retries: int = 3) -> str:
         ),
         "Accept": "*/*",
         "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://translate.google.com/",
     }
-    last_err = None
-    for attempt in range(retries):
+
+
+def _translate_deepl(text: str, src: str, tgt: str) -> str | None:
+    """Official DeepL API (free or pro key)."""
+    if not DEEPL_API_KEY:
+        return None
+    src_dl = _DEEPL_CODE.get(src)
+    tgt_dl = _DEEPL_CODE.get(tgt)
+    if not tgt_dl:
+        return None  # unsupported language
+    # Free keys use api-free.deepl.com; pro keys use api.deepl.com
+    base = "https://api-free.deepl.com" if DEEPL_API_KEY.endswith(":fx") or True else "https://api.deepl.com"
+    # Try free host first; if 403, try pro host
+    for host in ("https://api-free.deepl.com", "https://api.deepl.com"):
         try:
-            resp = requests.get(url, params=params, headers=headers, timeout=15)
-            if resp.status_code == 429:
-                wait = 1.5 * (attempt + 1)
-                time.sleep(wait)
-                last_err = "Too many requests (rate limited). Please wait a few seconds and try again."
+            data = {"text": text, "target_lang": tgt_dl}
+            if src_dl:
+                data["source_lang"] = src_dl
+            resp = requests.post(
+                f"{host}/v2/translate",
+                data=data,
+                headers={"Authorization": f"DeepL-Auth-Key {DEEPL_API_KEY}"},
+                timeout=20,
+            )
+            if resp.status_code == 403:
                 continue
-            resp.raise_for_status()
-            data = resp.json()
-            if not data or not data[0]:
-                return ""
-            return "".join(part[0] for part in data[0] if part and part[0])
-        except requests.exceptions.HTTPError as e:
-            last_err = str(e)
-            if "429" in str(e):
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            break
-        except Exception as e:
-            last_err = str(e)
-            time.sleep(0.8 * (attempt + 1))
-    return f"[Translation error: {last_err}]"
+            if resp.status_code != 200:
+                return None
+            translations = resp.json().get("translations") or []
+            if translations:
+                return translations[0].get("text") or None
+        except Exception:
+            continue
+    return None
 
 
-def google_translate_fallback(text: str, src: str, tgt: str) -> str:
-    """Translate text; split long input into chunks to reduce rate-limit risk."""
+def _translate_google_official(text: str, src: str, tgt: str) -> str | None:
+    """Official Google Cloud Translation API v2."""
+    if not GOOGLE_TRANSLATE_API_KEY:
+        return None
+    url = "https://translation.googleapis.com/language/translate/v2"
+    params = {
+        "key": GOOGLE_TRANSLATE_API_KEY,
+        "q": text,
+        "target": tgt,
+        "format": "text",
+    }
+    if src and src != "auto":
+        params["source"] = src
+    try:
+        resp = requests.post(url, params=params, timeout=20)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        translations = (data.get("data") or {}).get("translations") or []
+        if translations:
+            return translations[0].get("translatedText")
+    except Exception:
+        return None
+    return None
+
+
+def _translate_libre_configured(text: str, src: str, tgt: str) -> str | None:
+    """User-configured LibreTranslate instance."""
+    if not LIBRETRANSLATE_URL:
+        return None
+    code_map = {"iw": "he", "zh": "zh"}
+    payload = {
+        "q": text,
+        "source": code_map.get(src, src),
+        "target": code_map.get(tgt, tgt),
+        "format": "text",
+    }
+    if LIBRETRANSLATE_API_KEY:
+        payload["api_key"] = LIBRETRANSLATE_API_KEY
+    try:
+        resp = requests.post(
+            f"{LIBRETRANSLATE_URL}/translate",
+            json=payload,
+            headers=_headers(),
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            return None
+        return (resp.json() or {}).get("translatedText") or None
+    except Exception:
+        return None
+
+
+def _translate_google_free(text: str, src: str, tgt: str) -> str | None:
+    """Unofficial Google GTX endpoint (rate-limited)."""
+    url = "https://translate.googleapis.com/translate_a/single"
+    params = {"client": "gtx", "sl": src, "tl": tgt, "dt": "t", "q": text}
+    try:
+        resp = requests.get(url, params=params, headers=_headers(), timeout=12)
+        if resp.status_code == 429:
+            return None
+        resp.raise_for_status()
+        data = resp.json()
+        if not data or not data[0]:
+            return None
+        return "".join(part[0] for part in data[0] if part and part[0])
+    except Exception:
+        return None
+
+
+def _translate_mymemory(text: str, src: str, tgt: str) -> str | None:
+    """MyMemory free API (~1000 req/day, no key)."""
+    code_map = {"zh": "zh-CN", "iw": "he"}
+    url = "https://api.mymemory.translated.net/get"
+    params = {
+        "q": text[:450],
+        "langpair": f"{code_map.get(src, src)}|{code_map.get(tgt, tgt)}",
+    }
+    try:
+        resp = requests.get(url, params=params, headers=_headers(), timeout=12)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        if data.get("responseStatus") != 200:
+            return None
+        translated = (data.get("responseData") or {}).get("translatedText") or ""
+        if not translated or "MYMEMORY WARNING" in translated.upper():
+            return None
+        return translated
+    except Exception:
+        return None
+
+
+def _translate_chunk(text: str, src: str, tgt: str) -> str:
+    """Translate one chunk via the best available provider."""
     text = (text or "").strip()
     if not text:
         return ""
-    # Google free endpoint is happier with shorter queries
+
+    providers = [
+        ("DeepL", _translate_deepl),
+        ("Google Cloud", _translate_google_official),
+        ("LibreTranslate", _translate_libre_configured),
+        ("Google Free", _translate_google_free),
+        ("MyMemory", _translate_mymemory),
+    ]
+
+    errors = []
+    for name, fn in providers:
+        try:
+            result = fn(text, src, tgt)
+            if result:
+                return result
+        except Exception as e:
+            errors.append(f"{name}: {e}")
+
+    configured = any([DEEPL_API_KEY, GOOGLE_TRANSLATE_API_KEY, LIBRETRANSLATE_URL])
+    if not configured:
+        hint = (
+            " No API key configured. For reliable translation set DEEPL_API_KEY "
+            "(free at deepl.com/pro-api) or GOOGLE_TRANSLATE_API_KEY."
+        )
+    else:
+        hint = " Check your API key / quota."
+    return f"[Translation error: All providers failed or are rate-limited.{hint}]"
+
+
+def google_translate_fallback(text: str, src: str, tgt: str) -> str:
+    """Translate text; split long input into chunks."""
+    text = (text or "").strip()
+    if not text:
+        return ""
     max_len = 450
     if len(text) <= max_len:
         return _translate_chunk(text, src, tgt)
 
-    # Split on sentence boundaries when possible
     parts = re.split(r"(?<=[.!?।])\s+", text)
     chunks, buf = [], ""
     for p in parts:
@@ -304,7 +529,6 @@ def google_translate_fallback(text: str, src: str, tgt: str) -> str:
             if buf:
                 chunks.append(buf)
             if len(p) > max_len:
-                # hard-split very long segments
                 for i in range(0, len(p), max_len):
                     chunks.append(p[i : i + max_len])
                 buf = ""
@@ -316,36 +540,39 @@ def google_translate_fallback(text: str, src: str, tgt: str) -> str:
     results = []
     for i, chunk in enumerate(chunks):
         if i > 0:
-            time.sleep(0.4)  # small gap between chunks
+            time.sleep(0.3)
         results.append(_translate_chunk(chunk, src, tgt))
     return " ".join(results)
 
 
 def detect_language(text: str) -> str:
+    # Prefer Google free detect; fall back to "en"
     try:
         url = "https://translate.googleapis.com/translate_a/single"
         params = {"client": "gtx", "sl": "auto", "tl": "en", "dt": "t", "q": text[:200]}
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Referer": "https://translate.google.com/",
-        }
-        resp = requests.get(url, params=params, headers=headers, timeout=10)
-        if resp.status_code == 429:
-            return "en"
-        data = resp.json()
-        return data[2] if len(data) > 2 else "en"
+        resp = requests.get(url, params=params, headers=_headers(), timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data[2] if len(data) > 2 else "en"
     except Exception:
-        return "en"
+        pass
+    return "en"
 
 
 def smart_translate(text: str, src_code: str, tgt_code: str) -> str:
     if not text.strip():
         return ""
     return google_translate_fallback(text, src_code, tgt_code)
+
+
+def translation_status() -> dict:
+    """Return which providers are configured (for UI / health)."""
+    return {
+        "deepl": bool(DEEPL_API_KEY),
+        "google_cloud": bool(GOOGLE_TRANSLATE_API_KEY),
+        "libretranslate": bool(LIBRETRANSLATE_URL),
+        "free_fallback": True,
+    }
 
 
 def find_ambiguous_words(text: str) -> list:
@@ -421,44 +648,64 @@ def read_upload(file_storage):
 
 # ── Routes: pages ──────────────────────────────────────────────────────────
 @app.route("/")
+@login_required
 def index():
     return render_template("index.html", languages=list(LANG_MAP.keys()))
 
 
 @app.route("/translator")
+@login_required
 def translator_page():
     return render_template("translator.html", languages=list(LANG_MAP.keys()))
 
 
 @app.route("/pdf")
+@login_required
 def pdf_page():
     return render_template("pdf.html")
 
 
 @app.route("/convert")
+@login_required
 def convert_page():
     return render_template("convert.html")
 
 
 @app.route("/ocr")
+@login_required
 def ocr_page():
     return render_template("ocr.html", languages=list(LANG_MAP.keys()))
 
 
 @app.route("/images")
+@login_required
 def images_page():
     return render_template("images.html")
 
 
 @app.route("/tts")
+@login_required
 def tts_page():
     return render_template("tts.html", languages=list(LANG_MAP.keys()))
 
 
 @app.route("/qr")
+@login_required
 def qr_page():
     return render_template("qr.html")
 
+
+
+@app.route("/utilities")
+@login_required
+def utilities_page():
+    return render_template("utilities.html")
+
+
+@app.route("/history")
+@login_required
+def history_page():
+    return render_template("history.html")
 
 # ── API: Translator ────────────────────────────────────────────────────────
 @app.route("/api/translate", methods=["POST"])
@@ -500,8 +747,16 @@ def api_translate():
     translated = smart_translate(to_translate, src_code, tgt_code)
     clean = strip_context_hints(translated)
 
-    roman = get_romanization(clean, tgt_code) if tgt_code not in ("en", "la") else ""
-    back = smart_translate(clean, tgt_code, src_code) if len(text) < 500 else ""
+    # Skip extra API calls if primary translation failed
+    failed = clean.startswith("[Translation error:")
+    roman = ""
+    back = ""
+    if not failed:
+        if tgt_code not in ("en", "la"):
+            roman = get_romanization(clean, tgt_code)
+        if len(text) < 400:
+            time.sleep(0.5)  # gap before back-translate to reduce rate limits
+            back = smart_translate(clean, tgt_code, src_code)
 
     return jsonify({
         "translated": clean,
@@ -549,6 +804,12 @@ def api_ambiguous():
 
 
 # ── API: TTS ───────────────────────────────────────────────────────────────
+
+
+@app.route("/api/translation-status")
+def api_translation_status():
+    return jsonify(translation_status())
+
 @app.route("/api/tts", methods=["POST"])
 def api_tts():
     data = request.get_json(silent=True) or {}

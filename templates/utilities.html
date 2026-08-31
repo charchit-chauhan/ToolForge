@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Utilities — Tool Forge{% endblock %}
+{% block breadcrumb %}Home › <strong>Utilities</strong>{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Utilities</h1>
+  <p class="page-sub">Case converter, unit converter, and clipboard helpers.</p>
+</div>
+
+<div class="tool-tabs">
+  <button class="tool-tab active" data-panel="case">Case converter</button>
+  <button class="tool-tab" data-panel="units">Unit converter</button>
+  <button class="tool-tab" data-panel="clip">Clipboard</button>
+</div>
+
+<div class="tool-panel active" id="panel-case">
+  <div class="card">
+    <div class="form-group">
+      <label>Text</label>
+      <textarea id="caseIn" placeholder="Type or paste text…"></textarea>
+    </div>
+    <div class="flex gap-1" style="flex-wrap:wrap;margin-bottom:1rem">
+      <button class="btn btn-secondary" data-case="upper">UPPERCASE</button>
+      <button class="btn btn-secondary" data-case="lower">lowercase</button>
+      <button class="btn btn-secondary" data-case="title">Title Case</button>
+      <button class="btn btn-secondary" data-case="sentence">Sentence case</button>
+      <button class="btn btn-secondary" data-case="snake">snake_case</button>
+      <button class="btn btn-secondary" data-case="kebab">kebab-case</button>
+      <button class="btn btn-secondary" data-case="camel">camelCase</button>
+    </div>
+    <div class="card-label">Result</div>
+    <div class="result-box" id="caseOut" style="min-height:80px"></div>
+    <button class="btn btn-primary mt-1" id="caseCopy">📋 Copy result</button>
+  </div>
+</div>
+
+<div class="tool-panel" id="panel-units">
+  <div class="card">
+    <div class="form-row">
+      <div class="form-group">
+        <label>Value</label>
+        <input type="number" id="unitVal" value="1" step="any" />
+      </div>
+      <div class="form-group">
+        <label>Category</label>
+        <select id="unitCat">
+          <option value="length">Length</option>
+          <option value="weight">Weight</option>
+          <option value="temp">Temperature</option>
+          <option value="data">Data size</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>From</label>
+        <select id="unitFrom"></select>
+      </div>
+      <div class="form-group">
+        <label>To</label>
+        <select id="unitTo"></select>
+      </div>
+    </div>
+    <button class="btn btn-primary" id="unitConvert">Convert</button>
+    <div class="result-box mt-2" id="unitOut" style="min-height:48px">—</div>
+  </div>
+</div>
+
+<div class="tool-panel" id="panel-clip">
+  <div class="card">
+    <p class="text-sm text-muted mb-2">Paste once, then send the text to a tool.</p>
+    <textarea id="clipText" placeholder="Paste anything here…"></textarea>
+    <div class="flex gap-1 mt-2" style="flex-wrap:wrap">
+      <button class="btn btn-primary" id="clipPaste">📋 Paste from clipboard</button>
+      <a class="btn btn-secondary" id="clipTranslate" href="#">→ Translator</a>
+      <a class="btn btn-secondary" id="clipTTS" href="#">→ Text to Speech</a>
+      <a class="btn btn-secondary" id="clipQR" href="#">→ QR Code</a>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  // Case
+  document.querySelectorAll('[data-case]').forEach(btn => {
+    btn.onclick = () => {
+      const t = document.getElementById('caseIn').value;
+      const m = btn.dataset.case;
+      let o = t;
+      if (m==='upper') o = t.toUpperCase();
+      else if (m==='lower') o = t.toLowerCase();
+      else if (m==='title') o = t.replace(/\w\S*/g, w => w.charAt(0).toUpperCase()+w.slice(1).toLowerCase());
+      else if (m==='sentence') o = t.charAt(0).toUpperCase()+t.slice(1).toLowerCase();
+      else if (m==='snake') o = t.trim().replace(/\s+/g,'_').toLowerCase();
+      else if (m==='kebab') o = t.trim().replace(/\s+/g,'-').toLowerCase();
+      else if (m==='camel') o = t.trim().toLowerCase().replace(/[^a-zA-Z0-9]+(.)/g,(_,c)=>c.toUpperCase());
+      document.getElementById('caseOut').textContent = o;
+      TFHistory.add('Case: '+m, o.slice(0,80));
+    };
+  });
+  document.getElementById('caseCopy').onclick = () => {
+    navigator.clipboard.writeText(document.getElementById('caseOut').textContent||'');
+  };
+
+  // Units
+  const UNITS = {
+    length: { m:1, km:1000, cm:0.01, mm:0.001, mi:1609.34, ft:0.3048, in:0.0254 },
+    weight: { kg:1, g:0.001, lb:0.453592, oz:0.0283495, t:1000 },
+    temp: { C:'C', F:'F', K:'K' },
+    data: { B:1, KB:1024, MB:1048576, GB:1073741824, TB:1099511627776 }
+  };
+  function fillUnits() {
+    const cat = document.getElementById('unitCat').value;
+    const keys = Object.keys(UNITS[cat]);
+    ['unitFrom','unitTo'].forEach((id,i) => {
+      const sel = document.getElementById(id);
+      sel.innerHTML = keys.map((k,j)=>`<option value="${k}" ${j===i? 'selected':''}>${k}</option>`).join('');
+    });
+  }
+  document.getElementById('unitCat').onchange = fillUnits;
+  fillUnits();
+  document.getElementById('unitConvert').onclick = () => {
+    const cat = document.getElementById('unitCat').value;
+    const v = parseFloat(document.getElementById('unitVal').value);
+    const f = document.getElementById('unitFrom').value;
+    const t = document.getElementById('unitTo').value;
+    let result;
+    if (cat === 'temp') {
+      let c = v;
+      if (f==='F') c = (v-32)*5/9;
+      if (f==='K') c = v-273.15;
+      if (t==='C') result = c;
+      else if (t==='F') result = c*9/5+32;
+      else result = c+273.15;
+    } else {
+      const base = v * UNITS[cat][f];
+      result = base / UNITS[cat][t];
+    }
+    document.getElementById('unitOut').textContent = `${v} ${f} = ${Number(result.toPrecision(8))} ${t}`;
+    TFHistory.add('Unit convert', document.getElementById('unitOut').textContent);
+  };
+
+  // Clipboard
+  document.getElementById('clipPaste').onclick = async () => {
+    try {
+      document.getElementById('clipText').value = await navigator.clipboard.readText();
+    } catch(e) { alert('Clipboard permission denied — paste manually (Ctrl+V).'); }
+  };
+  function goTool(path) {
+    const text = document.getElementById('clipText').value;
+    sessionStorage.setItem('tf-clip', text);
+    location.href = path;
+  }
+  document.getElementById('clipTranslate').onclick = e => { e.preventDefault(); goTool('/translator'); };
+  document.getElementById('clipTTS').onclick = e => { e.preventDefault(); goTool('/tts'); };
+  document.getElementById('clipQR').onclick = e => { e.preventDefault(); goTool('/qr'); };
+})();
+</script>
+{% endblock %}

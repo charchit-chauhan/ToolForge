@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}History — Tool Forge{% endblock %}
+{% block breadcrumb %}Home › <strong>History</strong>{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Recent activity</h1>
+  <p class="page-sub">Stored only in this browser (localStorage). Nothing is uploaded.</p>
+</div>
+<div class="card">
+  <div class="flex gap-1 mb-2">
+    <button class="btn btn-secondary" id="histRefresh">Refresh</button>
+    <button class="btn btn-ghost" id="histClear">Clear history</button>
+  </div>
+  <ul class="history-list" id="histList"></ul>
+  <p class="text-muted text-sm" id="histEmpty" style="display:none">No history yet. Use a tool to record activity.</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function renderHist() {
+  const items = TFHistory.list();
+  const ul = document.getElementById('histList');
+  const empty = document.getElementById('histEmpty');
+  ul.innerHTML = '';
+  if (!items.length) { empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  items.forEach(it => {
+    const li = document.createElement('li');
+    li.innerHTML = `<div><strong>${it.title}</strong><div class="hist-meta">${it.detail||''}</div></div>
+      <span class="hist-meta">${new Date(it.ts).toLocaleString()}</span>`;
+    ul.appendChild(li);
+  });
+}
+document.getElementById('histRefresh').onclick = renderHist;
+document.getElementById('histClear').onclick = () => { TFHistory.clear(); renderHist(); };
+renderHist();
+</script>
+{% endblock %}

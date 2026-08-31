@@ -1,39 +1,104 @@
 <!DOCTYPE html>
 <html lang="en">
+<script>
+(function(){try{var t=localStorage.getItem('tf-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+</script>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}Tool Forge{% endblock %}</title>
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}" />
+  <meta name="theme-color" content="#2563eb" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧰</text></svg>" />
   {% block head %}{% endblock %}
 </head>
 <body>
-  <nav class="navbar">
-    <div class="nav-inner">
-      <a href="{{ url_for('index') }}" class="logo">
-        <span class="logo-icon">🧰</span>
-        <span>Tool Forge</span>
+{% if session.get('user_name') %}
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <a href="{{ url_for('index') }}" class="sidebar-brand">
+      <span class="logo-mark">🧰</span>
+      <span>Tool Forge<small>Utility Suite</small></span>
+    </a>
+    <nav class="sidebar-nav">
+      <div class="nav-section">Main</div>
+      <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">
+        <span class="nav-icon">🏠</span> Home
       </a>
-      <button class="menu-toggle" id="menuToggle" aria-label="Menu">☰</button>
-      <div class="nav-links" id="navLinks">
-        <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">Home</a>
-        <a href="{{ url_for('translator_page') }}" class="{% if request.endpoint == 'translator_page' %}active{% endif %}">Translator</a>
-        <a href="{{ url_for('pdf_page') }}" class="{% if request.endpoint == 'pdf_page' %}active{% endif %}">PDF Tools</a>
-        <a href="{{ url_for('convert_page') }}" class="{% if request.endpoint == 'convert_page' %}active{% endif %}">Convert</a>
-        <a href="{{ url_for('ocr_page') }}" class="{% if request.endpoint == 'ocr_page' %}active{% endif %}">OCR</a>
-        <a href="{{ url_for('images_page') }}" class="{% if request.endpoint == 'images_page' %}active{% endif %}">Images</a>
-        <a href="{{ url_for('tts_page') }}" class="{% if request.endpoint == 'tts_page' %}active{% endif %}">TTS</a>
-        <a href="{{ url_for('qr_page') }}" class="{% if request.endpoint == 'qr_page' %}active{% endif %}">QR Code</a>
+      <div class="nav-section">Tools</div>
+      <a href="{{ url_for('translator_page') }}" class="{% if request.endpoint == 'translator_page' %}active{% endif %}">
+        <span class="nav-icon">🌐</span> Translator
+      </a>
+      <a href="{{ url_for('pdf_page') }}" class="{% if request.endpoint == 'pdf_page' %}active{% endif %}">
+        <span class="nav-icon">📄</span> PDF Tools
+      </a>
+      <a href="{{ url_for('convert_page') }}" class="{% if request.endpoint == 'convert_page' %}active{% endif %}">
+        <span class="nav-icon">🔄</span> Convert
+      </a>
+      <a href="{{ url_for('ocr_page') }}" class="{% if request.endpoint == 'ocr_page' %}active{% endif %}">
+        <span class="nav-icon">🔍</span> OCR
+      </a>
+      <a href="{{ url_for('images_page') }}" class="{% if request.endpoint == 'images_page' %}active{% endif %}">
+        <span class="nav-icon">🖼️</span> Images
+      </a>
+      <a href="{{ url_for('tts_page') }}" class="{% if request.endpoint == 'tts_page' %}active{% endif %}">
+        <span class="nav-icon">🔊</span> Text → Speech
+      </a>
+      <a href="{{ url_for('qr_page') }}" class="{% if request.endpoint == 'qr_page' %}active{% endif %}">
+        <span class="nav-icon">📱</span> QR Code
+      </a>
+      <a href="{{ url_for('utilities_page') }}" class="{% if request.endpoint == 'utilities_page' %}active{% endif %}">
+        <span class="nav-icon">🧮</span> Utilities
+      </a>
+      <a href="{{ url_for('history_page') }}" class="{% if request.endpoint == 'history_page' %}active{% endif %}">
+        <span class="nav-icon">🕐</span> History
+      </a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="pro-card">
+        <h4>Private by design</h4>
+        <p>Files stay on your device. No cloud upload required.</p>
+      </div>
+      <div class="user-chip">
+        <div class="user-avatar">{{ session.get('user_name', 'U')[0]|upper }}</div>
+        <div class="user-meta">
+          <div class="user-name">{{ session.get('user_name', 'Guest') }}</div>
+          <div class="user-email">{{ session.get('user_email', '') }}</div>
+        </div>
+        <a href="{{ url_for('logout') }}" class="btn btn-ghost" style="padding:0.3rem 0.5rem;font-size:0.7rem" title="Sign out">⎋</a>
       </div>
     </div>
-  </nav>
+  </aside>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
-  {% block content %}{% endblock %}
+  <div class="main-wrap">
+    <header class="topbar">
+      <button class="topbar-toggle" id="menuToggle" aria-label="Menu">☰</button>
+      <div class="breadcrumb">{% block breadcrumb %}<strong>Home</strong>{% endblock %}</div>
+      <button type="button" class="theme-btn" id="themeToggle" title="Toggle theme">🌓</button>
+      <div class="topbar-search">
+        <span style="opacity:0.5">🔎</span>
+        <input type="search" placeholder="Search tools…" id="toolSearch" />
+        <kbd>⌘K</kbd>
+      </div>
+    </header>
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+    <footer class="footer">Tool Forge · Runs on your device · Built with Flask</footer>
+  </div>
+</div>
+{% else %}
+  {% block guest %}{% endblock %}
+{% endif %}
 
-  <footer class="footer">
-    Tool Forge · All-in-one document, image &amp; language utilities · Built with Flask
-  </footer>
+  <div class="cmd-overlay" id="cmdOverlay">
+  <div class="cmd-box">
+    <input type="text" id="cmdInput" placeholder="Search tools… (↑↓ Enter Esc)" autocomplete="off" />
+    <div class="cmd-list" id="cmdList"></div>
+  </div>
+</div>
 
   <div class="loading-overlay" id="loadingOverlay">
     <div class="loading-box">
@@ -43,6 +108,7 @@
   </div>
 
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <script>if('serviceWorker' in navigator){navigator.serviceWorker.register("{{ url_for('static', filename='sw.js') }}").catch(()=>{});}</script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

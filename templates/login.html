@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Sign in — Tool Forge{% endblock %}
+{% block guest %}
+<div class="login-page">
+  <div class="login-card">
+    <div class="logo-row">
+      <span class="logo-mark" style="width:40px;height:40px;border-radius:11px;background:linear-gradient(135deg,#2563eb,#7c3aed);display:grid;place-items:center;color:#fff;font-size:1.1rem">🧰</span>
+      <div>
+        <strong style="font-family:'Plus Jakarta Sans',sans-serif">Tool Forge</strong>
+        <div style="font-size:0.72rem;color:#94a3b8">Utility Suite</div>
+      </div>
+    </div>
+    <h1>Welcome back</h1>
+    <p class="login-sub">Enter your name and email once to unlock all tools. No password needed — this stays on your device.</p>
+    {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+    <form method="post" action="{{ url_for('login') }}">
+      <div class="form-group">
+        <label for="name">Your name</label>
+        <input type="text" id="name" name="name" placeholder="Alex Kim" required autofocus maxlength="80" value="{{ request.form.name or '' }}" />
+      </div>
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" placeholder="alex@example.com" required maxlength="120" value="{{ request.form.email or '' }}" />
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Continue to tools →</button>
+    </form>
+    <p class="text-sm text-muted mt-2" style="text-align:center;margin-top:1.25rem">
+      Local session only · Not sent to any server
+    </p>
+  </div>
+</div>
+{% endblock %}

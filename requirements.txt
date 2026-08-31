@@ -10,3 +10,4 @@ python-docx
 reportlab
 qrcode
 werkzeug
+gunicorn>=22.0.0

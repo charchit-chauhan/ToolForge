@@ -5,5 +5,10 @@ venv/
 .env
 uploads/*
 !uploads/.gitkeep
+temp/*
+!temp/.gitkeep
 *.zip
 .DS_Store
+.pytest_cache/
+.coverage
+htmlcov/

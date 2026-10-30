@@ -27,8 +27,9 @@
 5. **Environment variables** (Environment tab):
 
 ```
-SECRET_KEY=long-random-string-change-me
-DEEPL_API_KEY=your-deepl-key-if-any
+SECRET_KEY=<generate-a-long-random-value>
+APP_ENV=production
+DEEPL_API_KEY=<your-own-key-if-used>
 GOOGLE_TRANSLATE_API_KEY=
 ```
 
@@ -86,6 +87,7 @@ Others on the same Wi‑Fi open: `http://YOUR-PC-IP:5000`
 ## Production checklist
 
 - [ ] `SECRET_KEY` set to a long random value  
+- [ ] `APP_ENV=production` set so secure cookie settings are enabled  
 - [ ] `DEEPL_API_KEY` (or Google) set for reliable translation  
 - [ ] `debug=False` (use gunicorn, not `python app.py`)  
 - [ ] `.env` not committed to Git  

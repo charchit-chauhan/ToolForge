@@ -103,3 +103,6 @@ Copy `.env.example` to `.env` and fill in values. Restart `python app.py` after 
 - Max upload size: 80 MB  
 - Without API keys, translation may show rate-limit errors after a few requests  
 - OCR quality depends on installed Tesseract language packs  
+
+## Phase 1 stabilization
+See `PHASE1_CHANGELOG.md` for the security, upload-validation, temporary-file, and regression-test changes made while preserving existing tools. Install dependencies and run `pytest -q` to execute the Phase 1 checks.

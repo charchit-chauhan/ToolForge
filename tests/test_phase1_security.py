@@ -1,0 +1,56 @@
+"""Phase 1 regression tests. Run with: pytest -q"""
+import io
+import pytest
+
+from app import app
+
+
+@pytest.fixture()
+def client():
+    app.config.update(TESTING=True, SECRET_KEY="test-only-secret")
+    with app.test_client() as client:
+        yield client
+
+
+def sign_in(client):
+    with client.session_transaction() as session:
+        session["user_name"] = "Test User"
+        session["user_email"] = "test@example.com"
+
+
+def test_tool_pages_require_session(client):
+    response = client.get("/")
+    assert response.status_code == 302
+    assert "/login" in response.headers["Location"]
+
+
+def test_api_requires_session(client):
+    response = client.get("/api/translation-status")
+    assert response.status_code == 401
+    assert response.get_json()["login_required"] is True
+
+
+def test_signed_in_api_remains_available(client):
+    sign_in(client)
+    response = client.get("/api/translation-status")
+    assert response.status_code == 200
+
+
+def test_pdf_endpoint_rejects_wrong_extension(client):
+    sign_in(client)
+    response = client.post(
+        "/api/pdf/split",
+        data={"file": (io.BytesIO(b"not a pdf"), "notes.txt")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 415
+
+
+def test_pdf_endpoint_rejects_invalid_pdf_content(client):
+    sign_in(client)
+    response = client.post(
+        "/api/pdf/split",
+        data={"file": (io.BytesIO(b"this is not a pdf"), "notes.pdf")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 400

@@ -11,6 +11,8 @@ import time
 import base64
 import zipfile
 import tempfile
+import secrets
+import logging
 from pathlib import Path
 from datetime import datetime
 from functools import wraps
@@ -56,12 +58,89 @@ _load_dotenv()
 
 # ── App setup ──────────────────────────────────────────────────────────────
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "toolforge-dev-secret-change-me")
-app.config["PERMANENT_SESSION_LIFETIME"] = 60 * 60 * 24 * 30  # 30 days
-app.config["MAX_CONTENT_LENGTH"] = 80 * 1024 * 1024  # 80 MB
+# Never ship a predictable production secret. For local development a random key is
+# generated when SECRET_KEY is absent; set a stable secret in .env for persistent sessions.
+_is_production = os.environ.get("FLASK_ENV", "").lower() == "production" or os.environ.get("APP_ENV", "").lower() == "production"
+_secret_key = os.environ.get("SECRET_KEY")
+if _is_production and not _secret_key:
+    raise RuntimeError("SECRET_KEY must be configured in production.")
+app.secret_key = _secret_key or secrets.token_urlsafe(48)
+app.config["PERMANENT_SESSION_LIFETIME"] = 60 * 60 * 24 * 7  # 7 days
+app.config["MAX_CONTENT_LENGTH"] = 80 * 1024 * 1024  # 80 MB total request limit
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = _is_production
+app.config["MAX_FORM_MEMORY_SIZE"] = 2 * 1024 * 1024
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if _is_production:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
+
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(WORKDIR, exist_ok=True)
+
+
+# API endpoints are protected just like the tool pages. During Phase 1 the existing
+# name/email gate is retained for compatibility; Phase 2 replaces it with real accounts.
+@app.before_request
+def protect_api_and_validate_uploads():
+    if request.path.startswith("/api/") and not session.get("user_name"):
+        return jsonify({"error": "Please sign in before using this tool.", "login_required": True}), 401
+
+    if not request.files:
+        return None
+
+    path = request.path
+    if path.startswith("/api/pdf/"):
+        allowed = {"png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp"} if path.endswith("/from-images") else {"pdf"}
+    elif path.endswith("/word-to-pdf"):
+        allowed = {"docx"}
+    elif path.endswith("/pdf-to-word"):
+        allowed = {"pdf"}
+    elif path == "/api/ocr" or path.startswith("/api/image/"):
+        allowed = {"png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp", "gif"}
+    else:
+        allowed = None
+
+    for _, storage in request.files.items(multi=True):
+        if not storage or not storage.filename:
+            return jsonify({"error": "A file with a valid filename is required."}), 400
+        filename = secure_filename(storage.filename)
+        if not filename or "." not in filename:
+            return jsonify({"error": "Invalid filename."}), 400
+        extension = filename.rsplit(".", 1)[1].lower()
+        if allowed is not None and extension not in allowed:
+            return jsonify({"error": f"Unsupported file type: .{extension}"}), 415
+
+        # Verify actual content rather than trusting the filename or browser MIME type.
+        try:
+            sample = storage.stream.read(1024)
+            storage.stream.seek(0)
+            if extension == "pdf" and b"%PDF-" not in sample:
+                return jsonify({"error": "The uploaded file is not a valid PDF."}), 400
+            if extension in {"png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp", "gif"}:
+                image = Image.open(storage.stream)
+                image.verify()
+                storage.stream.seek(0)
+            elif extension == "docx":
+                import zipfile as _zipfile
+                with _zipfile.ZipFile(storage.stream) as archive:
+                    if "[Content_Types].xml" not in archive.namelist() or "word/document.xml" not in archive.namelist():
+                        return jsonify({"error": "The uploaded DOCX file is invalid."}), 400
+                storage.stream.seek(0)
+        except Exception:
+            storage.stream.seek(0)
+            return jsonify({"error": "The uploaded file is invalid or corrupted."}), 400
+    return None
 
 
 # ── Auth (one-time name gate for tools) ────────────────────────────────────
@@ -835,8 +914,9 @@ def api_pdf_merge():
         result = pdf_merge(blobs)
         return send_file(io.BytesIO(result), mimetype="application/pdf",
                          as_attachment=True, download_name="merged.pdf")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/pdf/split", methods=["POST"])
@@ -861,8 +941,9 @@ def api_pdf_split():
         buf.seek(0)
         return send_file(buf, mimetype="application/zip",
                          as_attachment=True, download_name="split_pages.zip")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/pdf/rotate", methods=["POST"])
@@ -875,8 +956,9 @@ def api_pdf_rotate():
         result = pdf_rotate(f.read(), degrees)
         return send_file(io.BytesIO(result), mimetype="application/pdf",
                          as_attachment=True, download_name="rotated.pdf")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/pdf/compress", methods=["POST"])
@@ -888,8 +970,9 @@ def api_pdf_compress():
         result = pdf_compress_simple(f.read())
         return send_file(io.BytesIO(result), mimetype="application/pdf",
                          as_attachment=True, download_name="compressed.pdf")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/pdf/watermark", methods=["POST"])
@@ -902,8 +985,9 @@ def api_pdf_watermark():
         result = pdf_add_watermark(f.read(), text)
         return send_file(io.BytesIO(result), mimetype="application/pdf",
                          as_attachment=True, download_name="watermarked.pdf")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/pdf/protect", methods=["POST"])
@@ -916,8 +1000,9 @@ def api_pdf_protect():
         result = pdf_protect(f.read(), password)
         return send_file(io.BytesIO(result), mimetype="application/pdf",
                          as_attachment=True, download_name="protected.pdf")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/pdf/unlock", methods=["POST"])
@@ -930,8 +1015,9 @@ def api_pdf_unlock():
         result = pdf_unlock(f.read(), password)
         return send_file(io.BytesIO(result), mimetype="application/pdf",
                          as_attachment=True, download_name="unlocked.pdf")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/pdf/extract-text", methods=["POST"])
@@ -942,8 +1028,9 @@ def api_pdf_extract_text():
     try:
         text = pdf_extract_text(f.read())
         return jsonify({"text": text})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/pdf/extract-images", methods=["POST"])
@@ -962,8 +1049,9 @@ def api_pdf_extract_images():
         buf.seek(0)
         return send_file(buf, mimetype="application/zip",
                          as_attachment=True, download_name="pdf_images.zip")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/pdf/to-images", methods=["POST"])
@@ -980,8 +1068,9 @@ def api_pdf_to_images():
         buf.seek(0)
         return send_file(buf, mimetype="application/zip",
                          as_attachment=True, download_name="pdf_pages.zip")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/pdf/from-images", methods=["POST"])
@@ -994,8 +1083,9 @@ def api_pdf_from_images():
         result = images_to_pdf(blobs)
         return send_file(io.BytesIO(result), mimetype="application/pdf",
                          as_attachment=True, download_name="from_images.pdf")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/pdf/info", methods=["POST"])
@@ -1006,8 +1096,9 @@ def api_pdf_info():
     try:
         count = pdf_get_page_count(f.read())
         return jsonify({"pages": count})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 # ── API: Word ↔ PDF ────────────────────────────────────────────────────────
@@ -1020,8 +1111,9 @@ def api_word_to_pdf():
         result = word_to_pdf(f.read())
         return send_file(io.BytesIO(result), mimetype="application/pdf",
                          as_attachment=True, download_name="converted.pdf")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/convert/pdf-to-word", methods=["POST"])
@@ -1034,8 +1126,9 @@ def api_pdf_to_word():
         return send_file(io.BytesIO(result),
                          mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                          as_attachment=True, download_name="converted.docx")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/convert/text-to-pdf", methods=["POST"])
@@ -1048,8 +1141,9 @@ def api_text_to_pdf():
         result = text_to_pdf(text)
         return send_file(io.BytesIO(result), mimetype="application/pdf",
                          as_attachment=True, download_name="document.pdf")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/convert/text-to-docx", methods=["POST"])
@@ -1063,8 +1157,9 @@ def api_text_to_docx():
         return send_file(io.BytesIO(result),
                          mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                          as_attachment=True, download_name="document.docx")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 # ── API: OCR & Text↔Image ──────────────────────────────────────────────────
@@ -1080,8 +1175,9 @@ def api_ocr():
         tess = TESSERACT_LANG_MAP.get(code, "eng")
         text = pytesseract.image_to_string(img, lang=tess)
         return jsonify({"text": text.strip()})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/text-to-image", methods=["POST"])
@@ -1101,8 +1197,9 @@ def api_text_to_image():
         )
         return send_file(io.BytesIO(result), mimetype="image/png",
                          as_attachment=True, download_name="text_image.png")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 # ── API: Image tools ───────────────────────────────────────────────────────
@@ -1118,8 +1215,9 @@ def api_image_convert():
         ext = "jpg" if fmt == "JPG" else fmt.lower()
         return send_file(io.BytesIO(result), mimetype=mime,
                          as_attachment=True, download_name=f"converted.{ext}")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/image/compress", methods=["POST"])
@@ -1132,8 +1230,9 @@ def api_image_compress():
         result = image_compress(f.read(), quality)
         return send_file(io.BytesIO(result), mimetype="image/jpeg",
                          as_attachment=True, download_name="compressed.jpg")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/image/resize", methods=["POST"])
@@ -1147,8 +1246,9 @@ def api_image_resize():
         result = image_resize(f.read(), width, height)
         return send_file(io.BytesIO(result), mimetype="image/png",
                          as_attachment=True, download_name="resized.png")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/image/rotate", methods=["POST"])
@@ -1164,8 +1264,9 @@ def api_image_rotate():
         result = image_rotate_flip(f.read(), degrees, flip_h, flip_v)
         return send_file(io.BytesIO(result), mimetype="image/png",
                          as_attachment=True, download_name="rotated.png")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/image/watermark", methods=["POST"])
@@ -1178,8 +1279,9 @@ def api_image_watermark():
         result = image_add_watermark_text(f.read(), text)
         return send_file(io.BytesIO(result), mimetype="image/png",
                          as_attachment=True, download_name="watermarked.png")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/image/grayscale", methods=["POST"])
@@ -1191,8 +1293,9 @@ def api_image_grayscale():
         result = image_to_grayscale(f.read())
         return send_file(io.BytesIO(result), mimetype="image/png",
                          as_attachment=True, download_name="grayscale.png")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/image/filter", methods=["POST"])
@@ -1211,8 +1314,9 @@ def api_image_filter():
         result = image_apply_filter(f.read(), filt_name)
         return send_file(io.BytesIO(result), mimetype="image/png",
                          as_attachment=True, download_name="filtered.png")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 @app.route("/api/qr", methods=["POST"])
@@ -1230,18 +1334,20 @@ def api_qr():
         )
         return send_file(io.BytesIO(result), mimetype="image/png",
                          as_attachment=True, download_name="qrcode.png")
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Tool processing failed")
+        return jsonify({"error": "Processing failed. Please check the file and try again."}), 500
 
 
 # ── Error handlers ─────────────────────────────────────────────────────────
 @app.errorhandler(413)
 def too_large(e):
-    return jsonify({"error": "File too large (max 80 MB)."}), 413
+    return jsonify({"error": "Request too large. Maximum upload size is 80 MB."}), 413
 
 
 @app.errorhandler(500)
 def server_error(e):
+    app.logger.exception("Unhandled application error")
     return jsonify({"error": "Internal server error."}), 500
 
 

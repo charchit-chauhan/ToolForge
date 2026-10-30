@@ -7,6 +7,8 @@ import io
 import os
 import html
 import subprocess
+import tempfile
+from pathlib import Path
 
 from pypdf import PdfReader, PdfWriter
 import pikepdf
@@ -76,49 +78,46 @@ def pdf_rotate(file_bytes: bytes, degrees: int, pages: list = None) -> bytes:
 
 
 def pdf_compress(file_bytes: bytes, image_quality: int = 60) -> bytes:
-    """
-    Compress a PDF by re-saving with object stream compression and
-    down-sampling embedded images via pikepdf + Pillow.
-    """
-    in_path = os.path.join(WORKDIR, "_compress_in.pdf")
-    out_path = os.path.join(WORKDIR, "_compress_out.pdf")
-    with open(in_path, "wb") as f:
-        f.write(file_bytes)
-
-    with pikepdf.open(in_path) as pdf:
-        for page in pdf.pages:
-            for img_key in list(page.images.keys()):
-                try:
-                    raw_img = page.images[img_key]
-                    pdfimg = pikepdf.PdfImage(raw_img)
-                    pil_img = pdfimg.as_pil_image()
-                    if pil_img.mode in ("RGBA", "P"):
-                        pil_img = pil_img.convert("RGB")
-                    buf = io.BytesIO()
-                    pil_img.save(buf, format="JPEG", quality=image_quality, optimize=True)
-                    buf.seek(0)
-                    raw_img.write(buf.read(), filter=pikepdf.Name("/DCTDecode"))
-                except Exception:
-                    continue
-        pdf.save(out_path, compress_streams=True,
-                 object_stream_mode=pikepdf.ObjectStreamMode.generate)
-
-    with open(out_path, "rb") as f:
-        return f.read()
+    """Compress a PDF using request-unique temporary files."""
+    with tempfile.TemporaryDirectory(prefix="toolforge-compress-") as temp_dir:
+        in_path = os.path.join(temp_dir, "input.pdf")
+        out_path = os.path.join(temp_dir, "output.pdf")
+        with open(in_path, "wb") as f:
+            f.write(file_bytes)
+        with pikepdf.open(in_path) as pdf:
+            for page in pdf.pages:
+                for img_key in list(page.images.keys()):
+                    try:
+                        raw_img = page.images[img_key]
+                        pdfimg = pikepdf.PdfImage(raw_img)
+                        pil_img = pdfimg.as_pil_image()
+                        if pil_img.mode in ("RGBA", "P"):
+                            pil_img = pil_img.convert("RGB")
+                        buf = io.BytesIO()
+                        pil_img.save(buf, format="JPEG", quality=image_quality, optimize=True)
+                        buf.seek(0)
+                        raw_img.write(buf.read(), filter=pikepdf.Name("/DCTDecode"))
+                    except Exception:
+                        continue
+            pdf.save(out_path, compress_streams=True,
+                     object_stream_mode=pikepdf.ObjectStreamMode.generate)
+        with open(out_path, "rb") as f:
+            return f.read()
 
 
 def pdf_compress_simple(file_bytes: bytes) -> bytes:
-    """Lighter-weight compression: strips metadata, optimizes object streams."""
-    in_path = os.path.join(WORKDIR, "_c_in.pdf")
-    out_path = os.path.join(WORKDIR, "_c_out.pdf")
-    with open(in_path, "wb") as f:
-        f.write(file_bytes)
-    with pikepdf.open(in_path) as pdf:
-        pdf.save(out_path, compress_streams=True,
-                  object_stream_mode=pikepdf.ObjectStreamMode.generate,
-                  linearize=False)
-    with open(out_path, "rb") as f:
-        return f.read()
+    """Lightweight PDF compression using request-unique temporary files."""
+    with tempfile.TemporaryDirectory(prefix="toolforge-compress-simple-") as temp_dir:
+        in_path = os.path.join(temp_dir, "input.pdf")
+        out_path = os.path.join(temp_dir, "output.pdf")
+        with open(in_path, "wb") as f:
+            f.write(file_bytes)
+        with pikepdf.open(in_path) as pdf:
+            pdf.save(out_path, compress_streams=True,
+                     object_stream_mode=pikepdf.ObjectStreamMode.generate,
+                     linearize=False)
+        with open(out_path, "rb") as f:
+            return f.read()
 
 
 def pdf_add_watermark(file_bytes: bytes, watermark_text: str, opacity: float = 0.3) -> bytes:
@@ -182,24 +181,24 @@ def pdf_extract_text(file_bytes: bytes) -> str:
 
 def pdf_extract_images(file_bytes: bytes) -> list:
     """Returns list of (filename, bytes) for extracted images."""
-    in_path = os.path.join(WORKDIR, "_extract_in.pdf")
-    with open(in_path, "wb") as f:
-        f.write(file_bytes)
     results = []
-    with pikepdf.open(in_path) as pdf:
-        for pg_num, page in enumerate(pdf.pages):
-            for img_num, (key, raw_img) in enumerate(page.images.items()):
-                try:
-                    pdfimg = pikepdf.PdfImage(raw_img)
-                    pil_img = pdfimg.as_pil_image()
-                    buf = io.BytesIO()
-                    fmt = "PNG"
-                    if pil_img.mode in ("RGBA", "P"):
-                        pil_img = pil_img.convert("RGB")
-                    pil_img.save(buf, format=fmt)
-                    results.append((f"page{pg_num+1}_img{img_num+1}.png", buf.getvalue()))
-                except Exception:
-                    continue
+    with tempfile.TemporaryDirectory(prefix="toolforge-extract-images-") as temp_dir:
+        in_path = os.path.join(temp_dir, "input.pdf")
+        with open(in_path, "wb") as f:
+            f.write(file_bytes)
+        with pikepdf.open(in_path) as pdf:
+            for pg_num, page in enumerate(pdf.pages):
+                for img_num, (key, raw_img) in enumerate(page.images.items()):
+                    try:
+                        pdfimg = pikepdf.PdfImage(raw_img)
+                        pil_img = pdfimg.as_pil_image()
+                        buf = io.BytesIO()
+                        if pil_img.mode in ("RGBA", "P"):
+                            pil_img = pil_img.convert("RGB")
+                        pil_img.save(buf, format="PNG")
+                        results.append((f"page{pg_num+1}_img{img_num+1}.png", buf.getvalue()))
+                    except Exception:
+                        continue
     return results
 
 
@@ -238,43 +237,41 @@ def pdf_get_page_count(file_bytes: bytes) -> int:
 # ════════════════════════════════════════════════
 
 def pdf_to_word(file_bytes: bytes) -> bytes:
-    """Convert PDF to a .docx file using pdf2docx (layout-preserving)."""
-    in_path = os.path.join(WORKDIR, "_p2w_in.pdf")
-    out_path = os.path.join(WORKDIR, "_p2w_out.docx")
-    with open(in_path, "wb") as f:
-        f.write(file_bytes)
-    cv = PDF2DocxConverter(in_path)
-    cv.convert(out_path)
-    cv.close()
-    with open(out_path, "rb") as f:
-        return f.read()
+    """Convert a PDF to DOCX using request-unique temporary files."""
+    with tempfile.TemporaryDirectory(prefix="toolforge-pdf-to-word-") as temp_dir:
+        in_path = os.path.join(temp_dir, "input.pdf")
+        out_path = os.path.join(temp_dir, "output.docx")
+        with open(in_path, "wb") as f:
+            f.write(file_bytes)
+        cv = PDF2DocxConverter(in_path)
+        try:
+            cv.convert(out_path)
+        finally:
+            cv.close()
+        with open(out_path, "rb") as f:
+            return f.read()
 
 
 def word_to_pdf(file_bytes: bytes) -> bytes:
-    """
-    Convert .docx to PDF. Tries LibreOffice headless first (best fidelity);
-    falls back to a pure-Python text-extraction + reportlab rebuild if
-    LibreOffice isn't available on the host.
-    """
-    in_path = os.path.join(WORKDIR, "_w2p_in.docx")
-    out_dir = WORKDIR
-    with open(in_path, "wb") as f:
-        f.write(file_bytes)
-
-    # Try LibreOffice headless conversion (best fidelity, preserves formatting)
-    try:
-        result = subprocess.run(
-            ["soffice", "--headless", "--convert-to", "pdf", "--outdir", out_dir, in_path],
-            capture_output=True, timeout=60
-        )
-        out_path = os.path.join(out_dir, "_w2p_in.pdf")
-        if result.returncode == 0 and os.path.exists(out_path):
-            with open(out_path, "rb") as f:
-                return f.read()
-    except Exception:
-        pass
-
-    # Fallback: extract text/paragraphs from docx and rebuild as a simple PDF
+    """Convert DOCX to PDF with an isolated LibreOffice profile and temp directory."""
+    with tempfile.TemporaryDirectory(prefix="toolforge-word-to-pdf-") as temp_dir:
+        in_path = os.path.join(temp_dir, "input.docx")
+        out_path = os.path.join(temp_dir, "input.pdf")
+        with open(in_path, "wb") as f:
+            f.write(file_bytes)
+        try:
+            profile_path = os.path.join(temp_dir, "lo-profile")
+            result = subprocess.run(
+                ["soffice", "-env:UserInstallation=" + Path(profile_path).as_uri(),
+                 "--headless", "--convert-to", "pdf", "--outdir", temp_dir, in_path],
+                capture_output=True, timeout=60, check=False
+            )
+            if result.returncode == 0 and os.path.exists(out_path):
+                with open(out_path, "rb") as f:
+                    return f.read()
+        except Exception:
+            pass
+    # Fallback: preserve basic text and paragraph structure without LibreOffice.
     return _word_to_pdf_fallback(file_bytes)
 
 

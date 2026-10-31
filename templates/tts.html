@@ -1,3 +1,4 @@
+
 {% extends "base.html" %}
 {% block title %}Text to Speech — Tool Forge{% endblock %}
 {% block breadcrumb %}Home › <strong>Text → Speech</strong>{% endblock %}
@@ -6,7 +7,7 @@
 <div class="container">
   <div class="page-header">
     <h1 class="page-title">Text → Speech</h1>
-    <p class="page-sub">Natural-sounding speech in dozens of languages.</p>
+    <p class="page-sub">Convert text into speech and download it as MP3.</p>
   </div>
 
   <div class="card">
@@ -14,15 +15,23 @@
       <label>Language</label>
       <select id="ttsLang">
         {% for lang in languages %}
-        <option value="{{ lang }}" {% if lang == 'English' %}selected{% endif %}>{{ lang }}</option>
+        <option value="{{ lang }}" {% if lang == 'English' %}selected{% endif %}>
+          {{ lang }}
+        </option>
         {% endfor %}
       </select>
     </div>
+
     <div class="form-group">
       <label>Text</label>
-      <textarea id="ttsText" placeholder="Enter text to convert to speech…"></textarea>
+      <textarea id="ttsText"
+        placeholder="Enter text to convert to speech..."></textarea>
     </div>
-    <button class="btn btn-primary" id="btnTts">🔊 Generate Speech</button>
+
+    <button class="btn btn-primary" id="btnTts">
+      🔊 Generate Speech
+    </button>
+
     <div id="errorBox" class="alert alert-error hidden mt-2"></div>
     <div id="ttsPlayer" class="mt-2"></div>
   </div>
@@ -33,25 +42,87 @@
 <script>
 document.getElementById('btnTts').onclick = async () => {
   const errorBox = document.getElementById('errorBox');
+  const player = document.getElementById('ttsPlayer');
+  const button = document.getElementById('btnTts');
+
   errorBox.classList.add('hidden');
+
   const text = document.getElementById('ttsText').value.trim();
-  if (!text) { errorBox.textContent = 'Enter some text'; errorBox.classList.remove('hidden'); return; }
-  showLoading('Generating speech…');
+  const lang = document.getElementById('ttsLang').value;
+
+  if (!text) {
+    errorBox.textContent = 'Please enter some text.';
+    errorBox.classList.remove('hidden');
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = 'Generating...';
+
   try {
     const res = await fetch('/api/tts', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({text, lang: document.getElementById('ttsLang').value})
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text, lang})
     });
+
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'TTS failed');
-    document.getElementById('ttsPlayer').innerHTML =
-      `<audio controls autoplay src="data:audio/mpeg;base64,${data.audio_b64}"></audio>
-       <p class="result-meta mt-1">Tip: right-click the player → Save audio</p>`;
-  } catch(e) {
-    errorBox.textContent = e.message;
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Speech generation failed.');
+    }
+
+    const binary = atob(data.audio_b64);
+    const bytes = new Uint8Array(binary.length);
+
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+
+    const blob = new Blob([bytes], {
+      type: data.mime || 'audio/mpeg'
+    });
+
+    const audioUrl = URL.createObjectURL(blob);
+
+    if (player.dataset.audioUrl) {
+      URL.revokeObjectURL(player.dataset.audioUrl);
+    }
+
+    player.dataset.audioUrl = audioUrl;
+    player.replaceChildren();
+
+    // Audio player
+    const audio = document.createElement('audio');
+    audio.controls = true;
+    audio.src = audioUrl;
+    audio.style.width = '100%';
+    audio.autoplay = true;
+
+    // Download button
+    const download = document.createElement('a');
+    download.href = audioUrl;
+    download.download = data.filename || 'ToolForge_Speech.mp3';
+    download.textContent = '⬇ Download MP3';
+    download.className = 'btn btn-primary mt-2';
+    download.style.display = 'inline-block';
+    download.style.textDecoration = 'none';
+
+    const message = document.createElement('p');
+    message.className = 'mt-2';
+    message.textContent = 'Speech generated successfully!';
+
+    player.appendChild(audio);
+    player.appendChild(download);
+    player.appendChild(message);
+
+  } catch (error) {
+    errorBox.textContent = error.message;
     errorBox.classList.remove('hidden');
-  } finally { hideLoading(); }
+  } finally {
+    button.disabled = false;
+    button.textContent = '🔊 Generate Speech';
+  }
 };
 </script>
 {% endblock %}

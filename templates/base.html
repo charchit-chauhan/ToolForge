@@ -26,6 +26,10 @@
       <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">
         <span class="nav-icon">🏠</span> Home
       </a>
+      {% if session.get('user_role') == 'admin' %}
+      <div class="nav-section">Administration</div>
+      <a href="{{ url_for('admin_dashboard') }}" class="{% if request.endpoint == 'admin_dashboard' %}active{% endif %}"><span class="nav-icon">🛡️</span> Admin Dashboard</a>
+      {% endif %}
       <div class="nav-section">Tools</div>
       <a href="{{ url_for('translator_page') }}" class="{% if request.endpoint == 'translator_page' %}active{% endif %}">
         <span class="nav-icon">🌐</span> Translator
@@ -66,7 +70,10 @@
           <div class="user-name">{{ session.get('user_name', 'Guest') }}</div>
           <div class="user-email">{{ session.get('user_email', '') }}</div>
         </div>
-        <a href="{{ url_for('logout') }}" class="btn btn-ghost" style="padding:0.3rem 0.5rem;font-size:0.7rem" title="Sign out">⎋</a>
+        <form method="post" action="{{ url_for('logout') }}" style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-ghost" style="padding:0.3rem 0.5rem;font-size:0.7rem" title="Sign out">⎋</button>
+        </form>
       </div>
     </div>
   </aside>
@@ -84,6 +91,9 @@
       </div>
     </header>
     <main class="content">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}<div class="alert alert-{{ 'error' if category == 'error' else 'success' }}">{{ message }}</div>{% endfor %}
+      {% endwith %}
       {% block content %}{% endblock %}
     </main>
     <footer class="footer">Tool Forge · Runs on your device · Built with Flask</footer>

@@ -14,18 +14,21 @@ import tempfile
 import secrets
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
+from urllib.parse import urlparse
 from functools import wraps
 
 from flask import (
     Flask, render_template, request, jsonify, send_file,
-    redirect, url_for, flash, session
+    redirect, url_for, flash, session, abort
 )
 from werkzeug.utils import secure_filename
+from sqlalchemy import func
+from flask_wtf.csrf import CSRFProtect, generate_csrf
+from models import db, User, ActivityLog
 from PIL import Image
 import pytesseract
 import requests
-from gtts import gTTS, lang as gtts_lang
 
 from processors import (
     pdf_merge, pdf_split, pdf_split_range, pdf_rotate, pdf_compress_simple,
@@ -71,7 +74,24 @@ app.config["MAX_CONTENT_LENGTH"] = 80 * 1024 * 1024  # 80 MB total request limit
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = _is_production
+app.config["SESSION_COOKIE_NAME"] = "toolforge_session"
 app.config["MAX_FORM_MEMORY_SIZE"] = 2 * 1024 * 1024
+# MySQL is used when DATABASE_URL is configured. SQLite keeps a fresh local clone
+# runnable before the developer has configured MySQL credentials.
+_default_db = "sqlite:///toolforge_dev.db"
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", _default_db)
+if _is_production and not app.config["SQLALCHEMY_DATABASE_URI"].startswith(("mysql://", "mysql+")):
+    raise RuntimeError("Configure DATABASE_URL with a MySQL connection string in production.")
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
+app.config["WTF_CSRF_TIME_LIMIT"] = 60 * 60 * 2
+# CSRF is explicitly checked for browser forms below. JSON APIs use same-origin checks
+# to preserve compatibility with the existing JavaScript clients.
+app.config["WTF_CSRF_CHECK_DEFAULT"] = False
+
+db.init_app(app)
+csrf = CSRFProtect(app)
+_db_initialized = False
 
 
 @app.after_request
@@ -90,11 +110,46 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(WORKDIR, exist_ok=True)
 
 
-# API endpoints are protected just like the tool pages. During Phase 1 the existing
-# name/email gate is retained for compatibility; Phase 2 replaces it with real accounts.
+# API endpoints are protected by the authenticated account session and upload checks.
+@app.context_processor
+def inject_csrf_token():
+    return {"csrf_token": generate_csrf}
+
+
 @app.before_request
-def protect_api_and_validate_uploads():
-    if request.path.startswith("/api/") and not session.get("user_name"):
+def initialize_database_and_protect_requests():
+    global _db_initialized
+    if not _db_initialized:
+        db.create_all()
+        _db_initialized = True
+
+    # Revalidate the account on every request so deleted/disabled accounts cannot
+    # continue using an old signed session cookie.
+    if session.get("user_id"):
+        current_user = db.session.get(User, session.get("user_id"))
+        if not current_user or not current_user.is_active:
+            session.clear()
+        else:
+            session["user_name"] = current_user.name
+            session["user_email"] = current_user.email
+            session["user_role"] = current_user.role
+
+    # Validate browser form submissions with Flask-WTF CSRF tokens.
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not request.path.startswith("/api/"):
+        csrf.protect()
+
+    # Existing tool APIs use same-origin fetch requests. Reject explicit cross-origin
+    # requests while keeping clients that do not send Origin/Referer headers compatible.
+    if request.path.startswith("/api/") and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        origin = request.headers.get("Origin")
+        referer = request.headers.get("Referer")
+        supplied = origin or referer
+        if supplied:
+            parsed = urlparse(supplied)
+            if parsed.netloc != request.host:
+                return jsonify({"error": "Cross-origin request rejected."}), 403
+
+    if request.path.startswith("/api/") and not session.get("user_id"):
         return jsonify({"error": "Please sign in before using this tool.", "login_required": True}), 401
 
     if not request.files:
@@ -144,45 +199,153 @@ def protect_api_and_validate_uploads():
     return None
 
 
-# ── Auth (one-time name gate for tools) ────────────────────────────────────
+# ── Authentication and roles ───────────────────────────────────────────────
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
-        if not session.get("user_name"):
+        if not session.get("user_id"):
             return redirect(url_for("login", next=request.path))
         return view(*args, **kwargs)
     return wrapped
 
 
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if session.get("user_name"):
+def role_required(*roles):
+    def decorator(view):
+        @wraps(view)
+        @login_required
+        def wrapped(*args, **kwargs):
+            user = db.session.get(User, session.get("user_id"))
+            if not user or user.role not in roles:
+                abort(403)
+            return view(*args, **kwargs)
+        return wrapped
+    return decorator
+
+
+def _safe_next_url(value):
+    if not value:
+        return url_for("index")
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc or not value.startswith("/") or value.startswith("//"):
+        return url_for("index")
+    return value
+
+
+def _record_activity(user_id, action, details=None):
+    try:
+        db.session.add(ActivityLog(user_id=user_id, action=action, details=(details or "")[:500]))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Could not record user activity")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if session.get("user_id"):
         return redirect(url_for("index"))
     error = None
     if request.method == "POST":
         name = (request.form.get("name") or "").strip()
-        email = (request.form.get("email") or "").strip()
-        if not name:
-            error = "Please enter your name."
-        elif not email:
-            error = "Please enter your email."
-        elif not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        email = (request.form.get("email") or "").strip().lower()
+        password = request.form.get("password") or ""
+        confirm = request.form.get("confirm_password") or ""
+        if len(name) < 2 or len(name) > 80:
+            error = "Name must contain 2 to 80 characters."
+        elif not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email) or len(email) > 254:
             error = "Please enter a valid email address."
+        elif len(password) < 10:
+            error = "Password must be at least 10 characters long."
+        elif len(password) > 128:
+            error = "Password must be 128 characters or fewer."
+        elif password != confirm:
+            error = "Passwords do not match."
+        elif User.query.filter(func.lower(User.email) == email).first():
+            error = "An account with this email already exists. Please sign in."
         else:
-            session["user_name"] = name[:80]
-            session["user_email"] = email[:120]
+            user = User(name=name, email=email, role="user", is_active=True)
+            user.set_password(password)
+            db.session.add(user)
+            db.session.commit()
+            session.clear()
+            session["user_id"] = user.id
+            session["user_name"] = user.name
+            session["user_email"] = user.email
+            session["user_role"] = user.role
             session.permanent = True
-            nxt = request.args.get("next") or url_for("index")
-            if not nxt.startswith("/"):
-                nxt = url_for("index")
-            return redirect(nxt)
+            _record_activity(user.id, "account_registered")
+            flash("Your ToolForge account has been created.", "success")
+            return redirect(url_for("index"))
+    return render_template("register.html", error=error)
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("user_id"):
+        return redirect(url_for("index"))
+    error = None
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+        password = request.form.get("password") or ""
+        user = User.query.filter(func.lower(User.email) == email).first() if email else None
+        if not user or not user.is_active or not user.check_password(password):
+            error = "Invalid email or password."
+        else:
+            session.clear()  # rotate session contents after authentication
+            session["user_id"] = user.id
+            session["user_name"] = user.name
+            session["user_email"] = user.email
+            session["user_role"] = user.role
+            session.permanent = True
+            user.last_login = datetime.now(timezone.utc)
+            db.session.commit()
+            _record_activity(user.id, "login")
+            return redirect(_safe_next_url(request.args.get("next")))
     return render_template("login.html", error=error)
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["POST"])
+@login_required
 def logout():
+    user_id = session.get("user_id")
+    _record_activity(user_id, "logout")
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/admin")
+@role_required("admin")
+def admin_dashboard():
+    user_count = User.query.count()
+    active_count = User.query.filter_by(is_active=True).count()
+    recent_users = User.query.order_by(User.created_at.desc()).limit(20).all()
+    recent_activity = ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(30).all()
+    return render_template("admin.html", user_count=user_count, active_count=active_count,
+                           recent_users=recent_users, recent_activity=recent_activity)
+
+
+@app.cli.command("create-admin")
+def create_admin_command():
+    """Create an administrator account interactively; public registration never grants admin."""
+    import click
+    db.create_all()
+    email = click.prompt("Admin email").strip().lower()
+    name = click.prompt("Admin name").strip()
+    password = click.prompt("Admin password (minimum 10 characters)", hide_input=True, confirmation_prompt=True)
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email) or len(email) > 254:
+        raise click.ClickException("Invalid email address.")
+    if len(name) < 2 or len(name) > 80:
+        raise click.ClickException("Name must contain 2 to 80 characters.")
+    if len(password) < 10 or len(password) > 128:
+        raise click.ClickException("Password must contain 10 to 128 characters.")
+    if User.query.filter(func.lower(User.email) == email).first():
+        raise click.ClickException("An account with this email already exists.")
+    user = User(name=name, email=email, role="admin", is_active=True)
+    user.set_password(password)
+    db.session.add(user)
+    db.session.commit()
+    click.echo(f"Administrator account created for {email}.")
+
 
 # ── Language maps ──────────────────────────────────────────────────────────
 LANG_MAP = {
@@ -690,46 +853,17 @@ def strip_context_hints(text: str) -> str:
     return re.sub(r"\s*\([^)]*\)", "", text)
 
 
-# Google TTS uses a few regional/legacy language identifiers that differ from
-# the general translation language map above (for example zh-CN rather than zh).
-TTS_LANGUAGE_ALIASES = {
-    "zh": "zh-CN",
-    "he": "iw",
-}
-
-
-def get_supported_tts_languages() -> set[str]:
-    """Return language codes supported by the installed gTTS language catalog."""
-    try:
-        return set(gtts_lang.tts_langs().keys())
-    except Exception:
-        app.logger.exception("Could not load the gTTS language catalog")
-        return set()
-
-
-def normalize_tts_language(lang_code: str) -> str | None:
-    code = TTS_LANGUAGE_ALIASES.get(lang_code, lang_code)
-    return code if code in get_supported_tts_languages() else None
-
-
 def get_tts_audio_b64(text: str, lang_code: str) -> str | None:
-    """Generate MP3 speech using gTTS; gTTS handles long-text chunking."""
-    tts_code = normalize_tts_language(lang_code)
-    if not tts_code:
-        return None
-
     try:
-        audio_buffer = io.BytesIO()
-        speech = gTTS(text=text, lang=tts_code, slow=False)
-        speech.write_to_fp(audio_buffer)
-        audio_buffer.seek(0)
-        audio_bytes = audio_buffer.read()
-        if not audio_bytes:
-            return None
-        return base64.b64encode(audio_bytes).decode("ascii")
+        url = "https://translate.google.com/translate_tts"
+        params = {"ie": "UTF-8", "client": "tw-ob", "tl": lang_code, "q": text[:200]}
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, params=params, headers=headers, timeout=12)
+        if resp.status_code == 200 and resp.content:
+            return base64.b64encode(resp.content).decode("utf-8")
     except Exception:
-        app.logger.exception("Text-to-speech generation failed for language %s", tts_code)
-        return None
+        pass
+    return None
 
 
 def get_romanization(text: str, src_code: str) -> str:
@@ -795,12 +929,7 @@ def images_page():
 @app.route("/tts")
 @login_required
 def tts_page():
-    supported_codes = get_supported_tts_languages()
-    available_languages = [
-        name for name, code in LANG_MAP.items()
-        if TTS_LANGUAGE_ALIASES.get(code, code) in supported_codes
-    ]
-    return render_template("tts.html", languages=available_languages)
+    return render_template("tts.html", languages=list(LANG_MAP.keys()))
 
 
 @app.route("/qr")
@@ -928,24 +1057,14 @@ def api_translation_status():
 def api_tts():
     data = request.get_json(silent=True) or {}
     text = (data.get("text") or "").strip()
-    lang = (data.get("lang") or "English").strip()
+    lang = data.get("lang", "English")
     if not text:
-        return jsonify({"error": "Please enter text to convert to speech."}), 400
-
-    # Accept either the visible language name (normal UI flow) or a valid code.
-    code = LANG_MAP.get(lang)
-    if code is None and lang in LANG_MAP.values():
-        code = lang
-    if code is None:
-        return jsonify({"error": "Please select a valid speech language."}), 400
-
-    if not normalize_tts_language(code):
-        return jsonify({"error": f"Speech generation is not currently supported for {lang}. Please choose another language."}), 415
-
+        return jsonify({"error": "No text provided."}), 400
+    code = LANG_MAP.get(lang, "en")
     b64 = get_tts_audio_b64(text, code)
     if not b64:
-        return jsonify({"error": "Speech generation failed. Check your internet connection and try again."}), 502
-    return jsonify({"audio_b64": b64, "mime": "audio/mpeg", "language": lang})
+        return jsonify({"error": "TTS unavailable for this language or text."}), 400
+    return jsonify({"audio_b64": b64, "mime": "audio/mp3"})
 
 
 # ── API: PDF tools ─────────────────────────────────────────────────────────

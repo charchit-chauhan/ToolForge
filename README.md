@@ -11,7 +11,7 @@ All-in-one document, image, and language utility suite — modern dark UI on **F
 | **Word ⇄ PDF** | DOCX→PDF, PDF→DOCX, plain text→PDF, plain text→DOCX |
 | **OCR & Text→Image** | Tesseract OCR multi-language, styled text rendered to PNG |
 | **Image Tools** | Convert format, compress, resize, rotate/flip, watermark, grayscale, filters |
-| **Text → Speech** | Speech audio in provider-supported languages, with language-code validation and long-text handling |
+| **Text → Speech** | Speech audio in many languages |
 | **QR Generator** | Custom size & colours |
 
 ## Quick start
@@ -103,6 +103,10 @@ Copy `.env.example` to `.env` and fill in values. Restart `python app.py` after 
 - Max upload size: 80 MB  
 - Without API keys, translation may show rate-limit errors after a few requests  
 - OCR quality depends on installed Tesseract language packs  
+
+## Phase 2
+
+Phase 2 adds MySQL-ready database-backed registration/login, hashed passwords, user/admin roles, activity records, and CSRF protections. Follow `PHASE2_SETUP.md` for database configuration and first-admin setup.
 
 ## Phase 1 stabilization
 See `PHASE1_CHANGELOG.md` for the security, upload-validation, temporary-file, and regression-test changes made while preserving existing tools. Install dependencies and run `pytest -q` to execute the Phase 1 checks.

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Create account — ToolForge{% endblock %}
+{% block guest %}
+<div class="login-page">
+  <div class="login-card">
+    <div class="logo-row"><span class="logo-mark" style="width:40px;height:40px;border-radius:11px;background:linear-gradient(135deg,#2563eb,#7c3aed);display:grid;place-items:center;color:#fff;font-size:1.1rem">🧰</span><div><strong style="font-family:'Plus Jakarta Sans',sans-serif">ToolForge</strong><div style="font-size:0.72rem;color:#94a3b8">Utility Suite</div></div></div>
+    <h1>Create your account</h1><p class="login-sub">Register to save your personal ToolForge workspace.</p>
+    {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+    <form method="post" action="{{ url_for('register') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-group"><label for="name">Full name</label><input type="text" id="name" name="name" placeholder="Your name" required minlength="2" maxlength="80" autocomplete="name" value="{{ request.form.name or '' }}"></div>
+      <div class="form-group"><label for="email">Email</label><input type="email" id="email" name="email" placeholder="you@example.com" required maxlength="254" autocomplete="email" value="{{ request.form.email or '' }}"></div>
+      <div class="form-group"><label for="password">Password</label><input type="password" id="password" name="password" placeholder="At least 10 characters" required minlength="10" maxlength="128" autocomplete="new-password"></div>
+      <div class="form-group"><label for="confirm_password">Confirm password</label><input type="password" id="confirm_password" name="confirm_password" placeholder="Enter password again" required minlength="10" maxlength="128" autocomplete="new-password"></div>
+      <button type="submit" class="btn btn-primary btn-block">Create account →</button>
+    </form>
+    <p class="text-sm text-muted mt-2" style="text-align:center;margin-top:1.25rem">Already registered? <a href="{{ url_for('login') }}">Sign in</a></p>
+  </div>
+</div>
+{% endblock %}

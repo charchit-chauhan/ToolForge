@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Admin Dashboard — ToolForge{% endblock %}
+{% block breadcrumb %}<strong>Admin Dashboard</strong>{% endblock %}
+{% block content %}
+<div class="page-header"><div><h1>Admin Dashboard</h1><p>Manage and monitor ToolForge accounts.</p></div></div>
+<div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1.5rem">
+  <div class="card"><div class="text-muted">Total users</div><h2>{{ user_count }}</h2></div>
+  <div class="card"><div class="text-muted">Active users</div><h2>{{ active_count }}</h2></div>
+</div>
+<div class="card" style="margin-bottom:1.5rem"><h2>Recent accounts</h2><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th align="left">Name</th><th align="left">Email</th><th align="left">Role</th><th align="left">Created</th><th align="left">Status</th></tr></thead><tbody>
+{% for user in recent_users %}<tr><td>{{ user.name }}</td><td>{{ user.email }}</td><td>{{ user.role }}</td><td>{{ user.created_at.strftime('%d %b %Y') if user.created_at else '—' }}</td><td>{{ 'Active' if user.is_active else 'Disabled' }}</td></tr>{% else %}<tr><td colspan="5">No users found.</td></tr>{% endfor %}
+</tbody></table></div></div>
+<div class="card"><h2>Recent activity</h2><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th align="left">User</th><th align="left">Action</th><th align="left">Details</th><th align="left">Time</th></tr></thead><tbody>
+{% for item in recent_activity %}<tr><td>{{ item.user.name if item.user else 'Unknown' }}</td><td>{{ item.action }}</td><td>{{ item.details or '—' }}</td><td>{{ item.created_at.strftime('%d %b %Y %H:%M') if item.created_at else '—' }}</td></tr>{% else %}<tr><td colspan="4">No activity recorded yet.</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% endblock %}

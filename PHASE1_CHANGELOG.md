@@ -26,3 +26,10 @@ An API credential was present in the uploaded `env.example`. It has been removed
 - Python syntax compilation: checked successfully.
 - Flask runtime smoke tests: not executed in this environment because Flask and the project dependencies are not installed here.
 - Automated regression tests: included; run after installing `requirements.txt` with `pytest -q`.
+
+
+## Text-to-Speech language fix
+- Replaced the fragile hand-built Google Translate TTS request with the gTTS client, which uses the supported language catalogue and handles long text in chunks.
+- Added regional/legacy language aliases (including Simplified Chinese) and explicit validation so unknown languages are no longer silently spoken as English.
+- The Text → Speech page now lists only languages supported by the speech provider; Translator speech reports a clear message when a selected target language is not available for TTS.
+- Updated audio MIME type to `audio/mpeg` and added regression tests for language validation and Chinese mapping.

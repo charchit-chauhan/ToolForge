@@ -11,7 +11,7 @@ All-in-one document, image, and language utility suite — modern dark UI on **F
 | **Word ⇄ PDF** | DOCX→PDF, PDF→DOCX, plain text→PDF, plain text→DOCX |
 | **OCR & Text→Image** | Tesseract OCR multi-language, styled text rendered to PNG |
 | **Image Tools** | Convert format, compress, resize, rotate/flip, watermark, grayscale, filters |
-| **Text → Speech** | Speech audio in many languages |
+| **Text → Speech** | Speech audio in provider-supported languages, with language-code validation and long-text handling |
 | **QR Generator** | Custom size & colours |
 
 ## Quick start

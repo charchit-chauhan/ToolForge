@@ -25,6 +25,7 @@ from werkzeug.utils import secure_filename
 from PIL import Image
 import pytesseract
 import requests
+from gtts import gTTS, lang as gtts_lang
 
 from processors import (
     pdf_merge, pdf_split, pdf_split_range, pdf_rotate, pdf_compress_simple,
@@ -689,17 +690,46 @@ def strip_context_hints(text: str) -> str:
     return re.sub(r"\s*\([^)]*\)", "", text)
 
 
-def get_tts_audio_b64(text: str, lang_code: str) -> str | None:
+# Google TTS uses a few regional/legacy language identifiers that differ from
+# the general translation language map above (for example zh-CN rather than zh).
+TTS_LANGUAGE_ALIASES = {
+    "zh": "zh-CN",
+    "he": "iw",
+}
+
+
+def get_supported_tts_languages() -> set[str]:
+    """Return language codes supported by the installed gTTS language catalog."""
     try:
-        url = "https://translate.google.com/translate_tts"
-        params = {"ie": "UTF-8", "client": "tw-ob", "tl": lang_code, "q": text[:200]}
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, params=params, headers=headers, timeout=12)
-        if resp.status_code == 200 and resp.content:
-            return base64.b64encode(resp.content).decode("utf-8")
+        return set(gtts_lang.tts_langs().keys())
     except Exception:
-        pass
-    return None
+        app.logger.exception("Could not load the gTTS language catalog")
+        return set()
+
+
+def normalize_tts_language(lang_code: str) -> str | None:
+    code = TTS_LANGUAGE_ALIASES.get(lang_code, lang_code)
+    return code if code in get_supported_tts_languages() else None
+
+
+def get_tts_audio_b64(text: str, lang_code: str) -> str | None:
+    """Generate MP3 speech using gTTS; gTTS handles long-text chunking."""
+    tts_code = normalize_tts_language(lang_code)
+    if not tts_code:
+        return None
+
+    try:
+        audio_buffer = io.BytesIO()
+        speech = gTTS(text=text, lang=tts_code, slow=False)
+        speech.write_to_fp(audio_buffer)
+        audio_buffer.seek(0)
+        audio_bytes = audio_buffer.read()
+        if not audio_bytes:
+            return None
+        return base64.b64encode(audio_bytes).decode("ascii")
+    except Exception:
+        app.logger.exception("Text-to-speech generation failed for language %s", tts_code)
+        return None
 
 
 def get_romanization(text: str, src_code: str) -> str:
@@ -765,7 +795,12 @@ def images_page():
 @app.route("/tts")
 @login_required
 def tts_page():
-    return render_template("tts.html", languages=list(LANG_MAP.keys()))
+    supported_codes = get_supported_tts_languages()
+    available_languages = [
+        name for name, code in LANG_MAP.items()
+        if TTS_LANGUAGE_ALIASES.get(code, code) in supported_codes
+    ]
+    return render_template("tts.html", languages=available_languages)
 
 
 @app.route("/qr")
@@ -893,14 +928,24 @@ def api_translation_status():
 def api_tts():
     data = request.get_json(silent=True) or {}
     text = (data.get("text") or "").strip()
-    lang = data.get("lang", "English")
+    lang = (data.get("lang") or "English").strip()
     if not text:
-        return jsonify({"error": "No text provided."}), 400
-    code = LANG_MAP.get(lang, "en")
+        return jsonify({"error": "Please enter text to convert to speech."}), 400
+
+    # Accept either the visible language name (normal UI flow) or a valid code.
+    code = LANG_MAP.get(lang)
+    if code is None and lang in LANG_MAP.values():
+        code = lang
+    if code is None:
+        return jsonify({"error": "Please select a valid speech language."}), 400
+
+    if not normalize_tts_language(code):
+        return jsonify({"error": f"Speech generation is not currently supported for {lang}. Please choose another language."}), 415
+
     b64 = get_tts_audio_b64(text, code)
     if not b64:
-        return jsonify({"error": "TTS unavailable for this language or text."}), 400
-    return jsonify({"audio_b64": b64, "mime": "audio/mp3"})
+        return jsonify({"error": "Speech generation failed. Check your internet connection and try again."}), 502
+    return jsonify({"audio_b64": b64, "mime": "audio/mpeg", "language": lang})
 
 
 # ── API: PDF tools ─────────────────────────────────────────────────────────

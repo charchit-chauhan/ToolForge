@@ -218,7 +218,7 @@
       const data = await res.json();
       if (!res.ok) { showError(data.error || 'TTS failed'); return; }
       document.getElementById('ttsPlayer').innerHTML =
-        `<audio controls autoplay src="data:audio/mp3;base64,${data.audio_b64}"></audio>`;
+        `<audio controls autoplay src="data:audio/mpeg;base64,${data.audio_b64}"></audio>`;
     } catch(e) { showError(e.message); }
     finally { hideLoading(); }
   };

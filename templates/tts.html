@@ -46,7 +46,7 @@ document.getElementById('btnTts').onclick = async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'TTS failed');
     document.getElementById('ttsPlayer').innerHTML =
-      `<audio controls autoplay src="data:audio/mp3;base64,${data.audio_b64}"></audio>
+      `<audio controls autoplay src="data:audio/mpeg;base64,${data.audio_b64}"></audio>
        <p class="result-meta mt-1">Tip: right-click the player → Save audio</p>`;
   } catch(e) {
     errorBox.textContent = e.message;
